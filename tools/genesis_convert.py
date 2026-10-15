@@ -13,7 +13,12 @@ GENESIS<level>.BIN (tools/pack_add.py).
 What it makes:
   - 4 palettes x 15 colours (9-bit, entry 0 transparent). Palette 3 entry 15 is black for the
     black cells (plane B). Colours of the palette-cycling ranges the level runs (jj1levelload.cpp
-    RotatePaletteEffect) get palette entries of their own, which the 68000 rotates.
+    RotatePaletteEffect) get palette entries of their own, which the 68000 rotates; when there
+    are too many, neighbouring indices of the long rotations share one (coarser steps).
+  - levels whose background is a parallax made of palette rotation (palette effect 8: an 8 x 8
+    texture, 9: diagonal stripes; texture_mode()) get that texture on plane B, its colours in
+    palette 3; plane A then holds the black cells too, and the tiles' see-through pixels show
+    the plain background colour (127), as the 32X's fill did.
   - 8x8 patterns, 4 bits per pixel, stored once (mirrored copies merged). Pattern 0 is empty,
     pattern 1 solid colour 15 (the black cells). If there are more than the video memory holds,
     the most similar ones are merged.
@@ -21,8 +26,8 @@ What it makes:
   - the level's map (256 x 64 tile numbers, 255 = nothing on plane A: foreground tiles and tiles
     the conversion does not have) and its black cells (bit map, plane B)
 
-OJGB v3, big-endian, offsets from the start of the file:
-   0  'OJGB'          4  u16 version 3      6  u16 flags (bit 0: the level has a sky)
+OJGB v4, big-endian, offsets from the start of the file:
+   0  'OJGB'          4  u16 version 4      6  u16 flags (bit 0: the level has a sky)
    8  u16 patterns (incl. 0 and 1)          10 u16 tiles
   12  u32 palettes: 64 words (palette p entry e at word p * 16 + e), Genesis 0BGR
   16  u32 patterns: 32 bytes each from pattern 0, in the order the 68000 fills video memory
@@ -32,7 +37,9 @@ OJGB v3, big-endian, offsets from the start of the file:
   32  u32 colour cycles: u16 groups; per group: u16 first, u16 amount, s32 step per vblank (16.16
       fixed, palette position; negative = the other way), u16 entries, entries x {u16 index - first,
       u16 CRAM byte address}, amount x u16 base colours (Genesis 0BGR); padded to 4
-  36  u16 size of the whole file / 4 (a check for the 68000)   38 u16 0
+  36  u16 size of the whole file / 4 (a check for the 68000)
+  38  u16 plane B: 0 black cells, 1 the 2D parallax texture, 2 the 1D diagonal stripes
+  40  4 x u16 the texture's name-table words (1: one pattern; 2: cell (u, v) word (u + v) % 4)
 """
 import struct, sys
 import numpy as np
@@ -127,13 +134,45 @@ class NoRoom(Exception):
     pass
 
 
-def convert_tiles(dump, used, budget, merge_ok):
-    tiles, grid, pal = dump['tiles'], dump['grid'], dump['pal']
-    nt = len(tiles)
-    on_plane = (grid[:, :, 1] & 2) == 0
+def texture_mode(dump):
+    """the level's parallax background made of palette rotation (jj1levelload.cpp,
+    paletteeffects.cpp): mode 1 = P2DPaletteEffect (128-191: an 8 x 8 texture, a tile pixel's
+    index is 128 + 8 * (y % 8) + x % 8), mode 2 = P1DPaletteEffect (128-159: diagonal stripes,
+    index 128 + (x + y + 1) % 32). Those pixels become the texture on plane B, scrolled by the
+    68000 as the effect turns the palette. Returns (mode, mask of those pixels in the tiles)."""
+    t = dump['tiles']
+    yy, xx = np.mgrid[0:32, 0:32]
+    if dump['type'] == PE_2D:
+        m = (t >= 128) & (t < 192) & (t == (128 + 8 * (yy % 8) + (xx % 8))[None])
+        if m.any():
+            return 1, m
+    if dump['type'] == PE_1D:
+        m = (t >= 128) & (t < 160) & (t == (128 + (xx + yy + 1) % 32)[None])
+        if m.any():
+            return 2, m
+    return 0, np.zeros(t.shape, bool)
 
-    # the colours: 9-bit levels per palette index
-    lv = q9(pal)                                          # 256 x 3 levels 0-7
+
+def convert_tiles(dump, used, budget, merge_ok):
+    tiles0, grid, pal = dump['tiles'], dump['grid'], dump['pal']
+    nt = len(tiles0)
+    on_plane = (grid[:, :, 1] & 2) == 0
+    mode, pattern = texture_mode(dump)
+
+    # the colours: 9-bit levels per palette index; 256 = the plain background (127), 257 = black
+    lv = np.vstack([q9(pal), q9(pal[127:128]), np.zeros((1, 3), np.int64)])
+    T = tiles0.astype(np.int16)
+    used = list(used)
+    if mode:
+        # with the texture on plane B, plane A has no see-through pixels but the texture's:
+        # the tiles' own see-through pixels show the plain background (as the 32X's fill did),
+        # and the black cells without a tile become a black tile (number nt)
+        T = T.copy()
+        T[T == TKEY] = 256
+        T[pattern] = TKEY
+        T = np.concatenate([T, np.full((1, 32, 32), 257, np.int16)])
+        used.append(nt)
+
     cyc = [c for c in cycles_for(dump['type'])]
     cyc_of = {}                                           # palette index -> (group, position)
     for g, (first, amount, _) in enumerate(cyc):
@@ -141,36 +180,64 @@ def convert_tiles(dump, used, budget, merge_ok):
             cyc_of[first + k] = (g, k)
 
     # cells: 16 per tile (rows of 4), 64 palette indices each
-    tl = tiles[used].reshape(len(used), 4, 8, 4, 8).transpose(0, 1, 3, 2, 4).reshape(-1, 64)
+    tl = T[used].reshape(len(used), 4, 8, 4, 8).transpose(0, 1, 3, 2, 4).reshape(-1, 64)
     key = tl == TKEY
     is_cyc = np.isin(tl, list(cyc_of.keys()))
     stat = ~key & ~is_cyc
 
-    # cycling entries: one per palette index the level's tiles use; they go into the last
-    # palettes (3, 2 ...) in index order
-    cyc_used = sorted(set(np.unique(tl[is_cyc & ~key]).tolist()))
-    if len(cyc_used) > 14 * 3:
-        raise SystemExit("too many cycling colours (%d)" % len(cyc_used))
     entries = [[None] * 16 for _ in range(4)]             # entry 0 unused (transparent)
-    entries[3][15] = ('black',)
-    slots = [(p, e) for p in (3, 2, 1, 0) for e in range(1, 16) if entries[p][e] is None]
-    # keep each cycling group in one palette where possible
-    cyc_entry = {}
-    groups_used = {}
+    tex_entry = {}
+    if mode:
+        rng = range(128, 192) if mode == 1 else range(128, 160)
+        cols = []
+        for i in rng:
+            c = tuple(int(x) for x in lv[i])
+            if c not in cols:
+                cols.append(c)
+        if len(cols) > 15:
+            raise SystemExit("the parallax texture has %d colours" % len(cols))
+        for e, c in enumerate(cols, 1):
+            entries[3][e] = ('tex', c)
+        for i in rng:
+            tex_entry[i] = 1 + cols.index(tuple(int(x) for x in lv[i]))
+    else:
+        entries[3][15] = ('black',)
+
+    # cycling entries: one per palette index the tiles use - or, when there are too many, one per
+    # 2, 4, 8 neighbouring indices of the longest rotations (they then step coarser)
+    cyc_used = sorted(set(np.unique(tl[is_cyc & ~key]).tolist()))
+    groups_idx = {}
     for i in cyc_used:
-        groups_used.setdefault(cyc_of[i][0], []).append(i)
-    order = sorted(groups_used, key=lambda g: -len(groups_used[g]))
-    for g in order:
-        idxs = groups_used[g]
+        groups_idx.setdefault(cyc_of[i][0], []).append(i)
+    quant = {g: 1 for g in groups_idx}
+    cap = 28 if mode else 40
+
+    def reps(g):
+        first = cyc[g][0]
+        return sorted(set(((i - first) // quant[g]) * quant[g] for i in groups_idx[g]))
+    for g in groups_idx:
+        while len(reps(g)) > 13:
+            quant[g] *= 2
+    while sum(len(reps(g)) for g in groups_idx) > cap:
+        g = max(groups_idx, key=lambda g: len(reps(g)))
+        if quant[g] >= cyc[g][1]:
+            raise SystemExit("cycling colours do not fit")
+        quant[g] *= 2
+    cyc_entry, rep_entry = {}, {}
+    for g in sorted(groups_idx, key=lambda g: -len(reps(g))):
+        first = cyc[g][0]
+        rs = reps(g)
         for p in (3, 2, 1, 0):
             free = [e for e in range(1, 16) if entries[p][e] is None]
-            if len(free) >= len(idxs) + 1 or (p == 0 and len(free) >= len(idxs)):
-                for i, e in zip(idxs, free):
-                    entries[p][e] = ('cyc', i)
-                    cyc_entry[i] = (p, e)
+            if len(free) >= len(rs) + (1 if p else 0):
+                for r, e in zip(rs, free):
+                    entries[p][e] = ('cyc', first + r)
+                    rep_entry[first + r] = (p, e)
                 break
         else:
             raise SystemExit("cycling colours do not fit")
+        for i in groups_idx[g]:
+            cyc_entry[i] = rep_entry[first + ((i - first) // quant[g]) * quant[g]]
 
     # static colours: palettes chosen by clustering the cells' mean colours, then each palette's
     # free entries by k-means over its cells' colours (weighted by pixel count), refined 3 times
@@ -192,7 +259,6 @@ def convert_tiles(dump, used, budget, merge_ok):
         cell_pal = np.zeros(len(tl), int)
     fixed = cell_cyc_pal >= 0
     cell_pal[fixed] = cell_cyc_pal[fixed]
-    colours = [[None] * 16 for _ in range(4)]
     for it in range(4):
         for p in stat_pals:
             free = [e for e in range(1, 16) if entries[p][e] is None or entries[p][e][0] == 'st']
@@ -209,7 +275,7 @@ def convert_tiles(dump, used, budget, merge_ok):
                 entries[p][e] = ('st', tuple(int(x) for x in c))
         # each cell: the palette with its cycling colours and the smallest error
         stat_cols = {p: np.array([entries[p][e][1] for e in range(1, 16)
-                                  if entries[p][e] and entries[p][e][0] == 'st'] or [(0, 0, 0)])
+                                  if entries[p][e] and entries[p][e][0] in ('st', 'tex')] or [(0, 0, 0)])
                      for p in range(4)}
         for ci in range(len(tl)):
             if not has_stat[ci]:
@@ -223,10 +289,10 @@ def convert_tiles(dump, used, budget, merge_ok):
                     best, be = p, e
             cell_pal[ci] = best
 
-    # patterns
+    # patterns (the texture's colours in palette 3 serve the cells there as static ones too)
     pal_cols = {}
     for p in range(4):
-        pal_cols[p] = [(e, entries[p][e][1]) for e in range(1, 16) if entries[p][e] and entries[p][e][0] == 'st']
+        pal_cols[p] = [(e, entries[p][e][1]) for e in range(1, 16) if entries[p][e] and entries[p][e][0] in ('st', 'tex')]
     pats = {bytes(64): 0}
     solid = bytes([15] * 64)
     pats[solid] = 1
@@ -265,14 +331,32 @@ def convert_tiles(dump, used, budget, merge_ok):
             found = (pats[q.tobytes()], 0, 0)
         names.append((found[0], p, found[1], found[2]))
 
+    ntex = {0: 0, 1: 1, 2: 4}[mode]
     merged = 0
-    if len(pats) > budget:
+    if len(pats) + ntex > budget:
         if not merge_ok:
             raise NoRoom()
-        pats, names, merged = merge(pats, names, entries, lv, budget)
+        pats, names, merged = merge(pats, names, entries, lv, budget - ntex)
 
-    tile_words = np.zeros((nt, 16), np.uint16)
-    tile_ok = np.zeros(nt, bool)
+    # the texture's patterns (plane B): 2D one 8 x 8 pattern; 1D four (a 32 x 32 block of
+    # diagonal stripes: cell (u, v) is pattern (u + v) % 4)
+    tex_words = [0, 0, 0, 0]
+    if mode:
+        yy, xx = np.mgrid[0:8, 0:8]
+        for m in range(ntex):
+            if mode == 1:
+                idx = 128 + 8 * yy + xx
+            else:
+                idx = 128 + (8 * m + yy + xx) % 32
+            q = np.vectorize(lambda i: tex_entry[int(i)])(idx).astype(np.uint8)
+            b = q.tobytes()
+            if b not in pats:
+                pats[b] = len(pats)
+            tex_words[m] = (3 << 13) | vram_index(pats[b])
+
+    nte = nt + (1 if mode else 0)
+    tile_words = np.zeros((nte, 16), np.uint16)
+    tile_ok = np.zeros(nte, bool)
     for ui, t in enumerate(used):
         tile_ok[t] = True
         for k in range(16):
@@ -281,13 +365,18 @@ def convert_tiles(dump, used, budget, merge_ok):
 
     mp = grid[:, :, 0].copy()
     mp[~on_plane] = 255
-    mp[~tile_ok[np.minimum(mp, nt - 1)] | (mp >= nt)] = 255
-    black = np.packbits((grid[:, :, 1] & 1) != 0, axis=1)   # 64 x 32 bytes
+    mp[(mp >= nt) | ~tile_ok[np.minimum(mp, nt - 1)]] = 255
+    blk = (grid[:, :, 1] & 1) != 0
+    if mode:
+        mp[blk & (mp == 255)] = nt                         # black cells: the black tile
+        blk = np.zeros_like(blk)
+    black = np.packbits(blk, axis=1)                       # 64 x 32 bytes
 
     info = dict(tiles=nt, used=len(used), patterns=len(pats), merged=merged,
-                cycling=len(cyc_used), rms=(err / max(nstat, 1)) ** 0.5)
+                cycling=len(cyc_used), reps=len(rep_entry), mode=mode, rms=(err / max(nstat, 1)) ** 0.5)
     return dict(entries=entries, pats=pats, tile_words=tile_words, map=mp, black=black,
-                cyc=cyc, cyc_entry=cyc_entry, lv=lv, sky=dump['sky']), info
+                cyc=cyc, rep_entry=rep_entry, lv=lv, sky=dump['sky'], mode=mode,
+                tex_words=tex_words), info
 
 
 def merge(pats, names, entries, lv, target):
@@ -354,7 +443,7 @@ def write(path, d):
             v = entries[p][e]
             if v is None or e == 0 or v[0] == 'black':
                 pal_words.append(0)
-            elif v[0] == 'st':
+            elif v[0] in ('st', 'tex'):
                 pal_words.append(word9(v[1]))
             else:                                         # cycling: its starting colour
                 pal_words.append(word9(d['lv'][v[1]]))
@@ -367,7 +456,7 @@ def write(path, d):
     cyc = bytearray()
     groups = []
     for g, (first, amount, speed) in enumerate(d['cyc']):
-        ents = sorted((i - first, (p * 16 + e) * 2) for i, (p, e) in d['cyc_entry'].items()
+        ents = sorted((i - first, (p * 16 + e) * 2) for i, (p, e) in d['rep_entry'].items()
                       if first <= i < first + amount)
         if ents:
             groups.append((first, amount, speed, ents))
@@ -382,18 +471,18 @@ def write(path, d):
             cyc += struct.pack('>H', word9(d['lv'][first + k]))
     while len(cyc) % 4:
         cyc += b'\0'
-    off_pal = 40
+    off_pal = 48
     off_pat = off_pal + 128
     off_tmap = off_pat + len(pat_bytes)
     off_map = off_tmap + len(tmap)
     off_black = off_map + 64 * 256
     off_cyc = off_black + 64 * 32
     total = off_cyc + len(cyc)
-    head = (b'OJGB' + struct.pack('>HH', 3, 1 if d['sky'] else 0) +
+    head = (b'OJGB' + struct.pack('>HH', 4, 1 if d['sky'] else 0) +
             struct.pack('>HH', len(d['pats']), len(d['tile_words'])) +
             struct.pack('>IIIIII', off_pal, off_pat, off_tmap, off_map, off_black, off_cyc) +
-            struct.pack('>HH', total // 4, 0))
-    assert len(head) == 40
+            struct.pack('>HH', total // 4, d['mode']) + struct.pack('>HHHH', *d['tex_words']))
+    assert len(head) == 48
     out = head + b''.join(struct.pack('>H', w) for w in pal_words) + bytes(pat_bytes) + tmap + \
         d['map'].tobytes() + d['black'].tobytes() + bytes(cyc)
     assert len(out) == total
@@ -409,9 +498,9 @@ if __name__ == '__main__':
     dump = load_dump(args[0])
     data, info = convert(dump)
     size = write(args[1], data)
-    print("%s: tiles %d used %d patterns %d merged %d cycling %d rms %.2f size %d" %
-          (args[0].rsplit('/', 1)[-1], info['tiles'], info['used'], info['patterns'], info['merged'],
-           info['cycling'], info['rms'], size))
+    print("%s: mode %d tiles %d used %d patterns %d merged %d cycling %d (%d entries) rms %.2f size %d" %
+          (args[0].rsplit('/', 1)[-1], info['mode'], info['tiles'], info['used'], info['patterns'], info['merged'],
+           info['cycling'], info['reps'], info['rms'], size))
     if png:
         import genesis_preview
         genesis_preview.preview(args[1], dump, png)

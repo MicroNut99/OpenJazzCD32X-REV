@@ -37,7 +37,7 @@ void genbg_level_loaded(int level, bool sky, const uint8_t *rgb)
 	if (state != OFF) genbg_level_left();
 	ncells = 0;
 	snprintf(name, sizeof name, "GENESIS%d.BIN", level);
-	if (!pack_file(name, &data, &size) || size < 40 || memcmp(data, "OJGB", 4) != 0 || data[5] != 3) {
+	if (!pack_file(name, &data, &size) || size < 40 || memcmp(data, "OJGB", 4) != 0 || data[5] != 4) {
 		char msg[64];
 		snprintf(msg, sizeof msg, "GENBG: no %s - the 32X draws the level", name);
 		plat_log(msg);

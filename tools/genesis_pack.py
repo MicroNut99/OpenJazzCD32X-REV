@@ -10,16 +10,13 @@ results go into one pack, GB<k>.PAK: the pack format of port/pack.h with files o
 (GENESIS<level>.BIN). The game loads it into the cart at 0x080000 after the world pack
 (port/sdl_oj.cpp oj32x_level_pack) and mounts it beside it.
 
-Levels the conversion leaves to the 32X (docs/GENESIS_PLANE.md):
-  - palette effect 8 / 9 (parallax backgrounds made of palette rotation) and 11 (water
-    darkening): their colours change with the camera - not done yet
-  - more cycling colours than the 4 palettes hold
+Every level is converted (R3); one the conversion cannot do stays the 32X's.
 """
 import glob, multiprocessing, os, struct, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import genesis_convert as gc
 
-SKIP_TYPES = {gc.PE_2D, gc.PE_1D, gc.PE_WATER}
+SKIP_TYPES = set()   # R3: every palette effect has its Genesis form
 GB_MAX = 0x80000          # cart 0x080000 - 0x100000
 
 
@@ -55,7 +52,8 @@ def convert_one(job):
     gc.write(tmp, data)
     blob = open(tmp, 'rb').read()
     os.remove(tmp)
-    return blob, "%d patterns%s" % (info['patterns'], " (%d merged)" % info['merged'] if info['merged'] else "")
+    return blob, "%d patterns%s%s" % (info['patterns'], " (%d merged)" % info['merged'] if info['merged'] else "",
+                                      " texture %d" % info['mode'] if info['mode'] else "")
 
 
 def main():

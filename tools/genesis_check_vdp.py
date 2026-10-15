@@ -11,7 +11,7 @@ same screen drawn straight from the OJGB file for the camera. Used with the Pico
 import struct, sys
 import numpy as np
 sys.path.insert(0, __file__.rsplit('/', 1)[0])
-from genesis_preview import read_ojgb, cell_word
+from genesis_preview import read_ojgb, cell_word, texture_pixel
 
 
 def swap16(b):
@@ -86,9 +86,11 @@ def expected(g, camx, camy, lines=range(12, 179)):
                 if word & 0x1000: py = 7 - py
                 e = q[py, px]
                 if e: v = ((word >> 13) & 3) * 16 + e
-            if not v and 0 <= wy < 2048 and 0 <= wx < 8192 and g['black'][wy >> 5, wx >> 5]:
+            if not v and g['mode']:
+                v = texture_pixel(g, camx, camy, x, s)
+            elif not v and 0 <= wy < 2048 and 0 <= wx < 8192 and g['black'][wy >> 5, wx >> 5]:
                 v = 3 * 16 + 15
-            if not v and not (0 <= wy < 2048 and 0 <= wx < 8192):
+            elif not v and not (0 <= wy < 2048 and 0 <= wx < 8192):
                 v = 3 * 16 + 15
             out[s, x] = v
     return out

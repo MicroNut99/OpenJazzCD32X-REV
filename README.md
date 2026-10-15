@@ -12,12 +12,13 @@ sky, the sprites, the foreground tiles and the status panel** - the 32X no longe
 as the view scrolls. The two pictures are mixed by the console: 32X colours with the priority
 bit are in front of the Genesis, the sky's colours behind it.
 
-- 48 of the 78 levels of Jazz CD are drawn by the Genesis (every level with a sky or a plain
-  background). Levels whose background is made of palette tricks that follow the camera
-  (parallax, diagonal stripes) and water levels still draw everything on the 32X, as before.
+- All 78 levels of Jazz CD are drawn by the Genesis (R3). The parallax backgrounds the original
+  makes by turning palette colours with the camera (a texture, diagonal stripes) are a texture on
+  the Genesis's second plane, scrolled by the 68000; the water levels' darkening is the Genesis
+  palette fading with the 32X's.
 - The Genesis has 61 colours on screen (4 palettes of 15, from 512) where the 32X had 256: the
-  tiles are converted to the nearest Genesis colours; the waterfall and lamp colour cycles keep
-  running (the 68000 rotates them).
+  tiles are converted to the nearest Genesis colours; the colour cycles (waterfalls, lamps,
+  lava) keep running (the 68000 rotates them; the longest ones in coarser steps).
 - Details: [docs/GENESIS_PLANE.md](docs/GENESIS_PLANE.md).
 
 **First start of a REV disc: hold A + B + C** while switching on (full reload), so the new

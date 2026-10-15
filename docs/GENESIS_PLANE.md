@@ -37,9 +37,20 @@ makes from one level:
   black cells (a bit map).
 
 `tools/genesis_pack.py` puts a world's levels into one pack, `GB<k>.PAK` (k = the world pack's
-number). Levels it leaves to the 32X: palette effect 8 / 9 (parallax backgrounds made of palette
-rotation) and 11 (water darkening), whose colours change with the camera, and levels with more
-rotating colours than 4 palettes hold. Jazz CD: 48 of 78 levels.
+number). Jazz CD: all 78 levels (R3).
+
+### Backgrounds made of palette rotation (R3)
+
+| Palette effect | What the original does | On the Genesis |
+|---|---|---|
+| 8, `P2DPaletteEffect` | colours 128-191 are an 8 x 8 texture (a tile pixel's index is 128 + 8 (y mod 8) + x mod 8); the palette is turned by the camera / 8 - a parallax background | the texture is one pattern filling plane B; the 68000 scrolls plane B by -(x + (8192 - x) / 8), y - 12 + (2048 - y) / 8 |
+| 9, `P1DPaletteEffect` | colours 128-159: diagonal stripes (index 128 + (x + y + 1) mod 32), turned by (x + y) / 2 | four patterns (a 32 x 32 block) fill plane B; h-scroll (x + y) / 2 - x |
+| 11, `WaterPaletteEffect` | the whole palette darker the deeper Jazz is under water | the fade the SH2 measures (as for the level start / end) |
+| rotations of 32 colours | | when the palettes run short, 2, 4 or 8 neighbouring colours share one entry (coarser steps) |
+
+In those levels plane A holds the black cells too (a black tile), and the tiles' see-through
+pixels show the plain background colour (127), as the 32X's fill did; the texture's colours are
+in palette 3. The stripes use whole pixels on the 32X too (paletteeffects.cpp), so both agree.
 
 ## At run time
 

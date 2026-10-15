@@ -633,6 +633,11 @@ void P1DPaletteEffect::apply (SDL_Color* shownPalette, bool direct, int mspf, bo
 
 	currentPalette = video.getPalette();
 	position = viewX + viewY;
+#ifdef OJ32X
+	// REV (R3): whole pixels, as the 68000 scrolls the stripes on the Genesis plane B
+	// (cd32x/subcpu/genbg_md.s gb_scroll): the fractions of the two could add up to a pixel
+	position = ITOF(FTOI(viewX) + FTOI(viewY));
+#endif
 
 	for (int i = 0; i < amount; i++) {
 

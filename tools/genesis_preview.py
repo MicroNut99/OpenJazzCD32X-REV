@@ -30,7 +30,29 @@ def read_ojgb(path):
     tmap = np.frombuffer(d[offs[2]:offs[2] + ntiles * 32], '>u2').reshape(ntiles, 16)
     mp = np.frombuffer(d[offs[3]:offs[3] + 64 * 256], np.uint8).reshape(64, 256)
     black = np.unpackbits(np.frombuffer(d[offs[4]:offs[4] + 64 * 32], np.uint8).reshape(64, 32), axis=1)
-    return dict(pal=pal, pix=pix, vram=vram, tmap=tmap, map=mp, black=black, flags=flags, raw=d, offs=offs)
+    mode = struct.unpack('>H', d[38:40])[0] if ver >= 4 else 0
+    tex = struct.unpack('>HHHH', d[40:48]) if ver >= 4 else (0, 0, 0, 0)
+    return dict(pal=pal, pix=pix, vram=vram, tmap=tmap, map=mp, black=black, flags=flags, raw=d, offs=offs,
+                mode=mode, tex=tex)
+
+
+def plane_b_scroll(g, camx, camy):
+    """plane B's h / v scroll for the camera, as gb_scroll in cd32x/subcpu/genbg_md.s"""
+    if g['mode'] == 1:
+        return -(camx + ((8192 - camx) >> 3)), camy - 12 + ((2048 - camy) >> 3)
+    if g['mode'] == 2:
+        return ((camx + camy) >> 1) - camx, camy - 12
+    return -camx, camy - 12
+
+
+def texture_pixel(g, camx, camy, sx, s):
+    """plane B's texture at screen pixel (sx, line s): palette * 16 + entry"""
+    hb, vb = plane_b_scroll(g, camx, camy)
+    px, py = (sx - hb) & 511, (s + vb) & 255
+    word = g['tex'][0] if g['mode'] == 1 else g['tex'][((px >> 3) + (py >> 3)) & 3]
+    q = g['pix'][g['vram'][word & 0x7FF]]
+    e = q[py & 7, px & 7]
+    return ((word >> 13) & 3) * 16 + e if e else 0
 
 
 def rgb_of_word(w):

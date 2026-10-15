@@ -37,7 +37,7 @@
         .equ    GB_CYC,   0xFFE800      /* the colour cycles as in the file */
         .equ    GB_CYCMAX,0x600
         .equ    GB_PAL,   0xFFEE00      /* 64 colours before fading */
-        .equ    GB_HEAD,  0xFFEE80      /* the file header (40 bytes) */
+        .equ    GB_HEAD,  0xFFEE80      /* the file header (48 bytes; +38 plane B mode, +40 texture words) */
         .equ    GB_V,     0xFFEEC0      /* variables */
         .equ    gbv_on,    0            /* w: 1 = a level is shown (vblank updates) */
         .equ    gbv_cx,    2            /* w: window's first world cell column */
@@ -237,13 +237,15 @@ gb_column:
         moveq   #31,d1
 5:      move.w  (a1)+,0xC00000
         dbra    d1,5b
+        tst.w   GB_HEAD+38              /* plane B is the texture: nothing to write there */
+        bne.b   7f
         move.w  d5,d0
         addi.w  #0xA000,d0
         bsr.w   gb_vram_w
         moveq   #31,d1
 6:      move.w  (a1)+,0xC00000
         dbra    d1,6b
-        move.w  #0x8F02,0xC00004
+7:      move.w  #0x8F02,0xC00004
         rts
 
 | d3.w = world cell row: that row for the window's 64 columns, both planes
@@ -320,12 +322,55 @@ gb_row:
         moveq   #63,d1
 5:      move.w  (a1)+,0xC00000
         dbra    d1,5b
+        tst.w   GB_HEAD+38              /* plane B is the texture: nothing to write there */
+        bne.b   7f
         move.w  d5,d0
         addi.w  #0xA000,d0
         bsr.w   gb_vram_w
         moveq   #63,d1
 6:      move.w  (a1)+,0xC00000
         dbra    d1,6b
+7:      rts
+
+| scroll: d6.w = camera x, d5.w = camera y (uses d0-d2). Plane A: h = -x, v = y - 12 (screen
+| line 12 shows world row y). Plane B the same, or the parallax texture's own (GB_HEAD+38):
+|   1 (P2DPaletteEffect, 8 x 8 texture, speed 1/8): tx = (8192 - x) >> 3, ty = (2048 - y) >> 3,
+|     h = -(x + tx), v = y - 12 + ty
+|   2 (P1DPaletteEffect, diagonal stripes, speed 1/2): p = (x + y) >> 1, h = p - x, v = y - 12
+gb_scroll:
+        move.l  #0x70000003,0xC00004    /* h-scroll (0xF000): plane A, then B */
+        move.w  d6,d0
+        neg.w   d0
+        move.w  d0,0xC00000
+        move.w  GB_HEAD+38,d1
+        beq.b   1f
+        cmpi.w  #1,d1
+        bne.b   2f
+        move.w  #8192,d2
+        sub.w   d6,d2
+        lsr.w   #3,d2
+        add.w   d6,d2
+        neg.w   d2
+        move.w  d2,0xC00000
+        bra.b   3f
+2:      move.w  d6,d2
+        add.w   d5,d2
+        lsr.w   #1,d2
+        sub.w   d6,d2
+        move.w  d2,0xC00000
+        bra.b   3f
+1:      move.w  d0,0xC00000
+3:      move.l  #0x40000010,0xC00004    /* v-scroll: plane A, then B */
+        move.w  d5,d0
+        subi.w  #12,d0
+        move.w  d0,0xC00000
+        cmpi.w  #1,d1
+        bne.b   4f
+        move.w  #2048,d2
+        sub.w   d5,d2
+        lsr.w   #3,d2
+        add.w   d2,d0
+4:      move.w  d0,0xC00000
         rts
 
 | the whole window for gbv_cx / gbv_cy (uses d0-d7, a0-a1)
@@ -465,12 +510,12 @@ genbg_load:
         move.w  #0x8134,(a5)            /* display off while loading */
         move.l  d3,d6                   /* the header */
         lea     GB_HEAD,a1
-        moveq   #20,d7
+        moveq   #24,d7
         moveq   #0,d5
         bsr.w   gb_copy
         cmpi.l  #0x4F4A4742,GB_HEAD     /* 'OJGB' */
         bne.w   90f
-        cmpi.w  #3,GB_HEAD+4
+        cmpi.w  #4,GB_HEAD+4
         bne.w   90f
         move.w  GB_HEAD+10,d0           /* tiles */
         cmpi.w  #GB_MAXTILES,d0
@@ -559,12 +604,31 @@ genbg_load:
         lea     GB_BLACK,a1
         move.l  #1024,d7
         bsr.w   gb_copy
-        /* both planes empty, one empty sprite, scroll 0 */
+        /* plane B: empty (black cells come with the columns / rows) or the parallax texture
+           (mode 1: one pattern everywhere; mode 2: cell (u, v) = word (u + v) % 4) */
         move.w  #0xA000,d0
         bsr.w   gb_vram_w
-        move.w  #2047,d0
-5:      move.w  #0,0xC00000
-        dbra    d0,5b
+        moveq   #0,d2                   /* plane row v */
+50:     moveq   #0,d3                   /* plane column u */
+51:     moveq   #0,d0
+        tst.w   GB_HEAD+38
+        beq.b   52f
+        move.w  d2,d1
+        add.w   d3,d1
+        andi.w  #3,d1
+        cmpi.w  #1,GB_HEAD+38
+        bne.b   53f
+        moveq   #0,d1
+53:     add.w   d1,d1
+        lea     GB_HEAD+40,a0
+        move.w  0(a0,d1.w),d0
+52:     move.w  d0,0xC00000
+        addq.w  #1,d3
+        cmpi.w  #64,d3
+        blo.b   51b
+        addq.w  #1,d2
+        cmpi.w  #32,d2
+        blo.b   50b
         move.w  #0xE000,d0
         bsr.w   gb_vram_w
         move.w  #2047,d0
@@ -612,16 +676,8 @@ genbg_start:
         movem.w d6-d7,-(sp)
         bsr.w   gb_fill
         movem.w (sp)+,d6-d7
-        move.l  #0x70000003,0xC00004    /* h-scroll (0xF000): planes A and B */
-        move.w  d6,d0
-        neg.w   d0
-        move.w  d0,0xC00000
-        move.w  d0,0xC00000
-        move.l  #0x40000010,0xC00004    /* v-scroll: screen line 12 shows world row y */
-        move.w  d7,d0
-        subi.w  #12,d0
-        move.w  d0,0xC00000
-        move.w  d0,0xC00000
+        move.w  d7,d5
+        bsr.w   gb_scroll
         moveq   #0,d7                   /* colours, not faded (the vblank fades them) */
         bsr.w   gb_cram
         move.w  #1,GB_V+gbv_on
@@ -764,18 +820,9 @@ genbg_vblank:
         bpl.b   3f
         move.w  #0x8134,d0
 3:      move.w  d0,(a5)
-        move.l  #0x70000003,(a5)        /* h-scroll (0xF000): planes A and B */
-        move.w  d6,d0
-        neg.w   d0
-        move.w  d0,0xC00000
-        move.w  d0,0xC00000
         move.w  d7,d5
         andi.w  #0x7FF,d5               /* camera y */
-        move.l  #0x40000010,(a5)        /* v-scroll: screen line 12 shows world row y */
-        move.w  d5,d0
-        subi.w  #12,d0
-        move.w  d0,0xC00000
-        move.w  d0,0xC00000
+        bsr.w   gb_scroll
         movem.w d5-d6,-(sp)
         bsr.w   gb_cram                 /* d7: fade */
         movem.w (sp)+,d5-d6

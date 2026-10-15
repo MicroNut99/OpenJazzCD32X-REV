@@ -486,7 +486,7 @@ int plat_genbg(int op, uint32_t arg)
 	switch (op) {
 	case GENBG_LOAD: {
 		const uint8_t *b = plat_cart_ptr(arg);
-		if (memcmp(b, "OJGB", 4) != 0 || be16(b + 4) != 3) return 0;
+		if (memcmp(b, "OJGB", 4) != 0 || be16(b + 4) != 4) return 0;
 		hg_blob = b;
 		memcpy(hg_map, b + be32(b + 24), sizeof hg_map);
 		hg_shown = 0;
@@ -565,9 +565,32 @@ static int hg_pixel(int wx, int wy)
 			if (e) return ((word >> 13) & 3) * 16 + e;
 		}
 	}
+	if (be16(b + 38)) return -1;   /* plane B is the parallax texture: hg_texture */
 	const uint8_t blk = b[be32(b + 28) + (wy >> 5) * 32 + (wx >> 8)];
 	if (blk & (0x80 >> ((wx >> 5) & 7))) return 63;
 	return 0;
+}
+
+/* plane B's parallax texture at screen (sx, line s) for the camera, as gb_scroll in
+ * cd32x/subcpu/genbg_md.s: palette * 16 + entry */
+static int hg_texture(int camx, int camy, int sx, int s)
+{
+	const uint8_t *b = hg_blob;
+	const int mode = be16(b + 38);
+	int hb, vb;
+	if (mode == 1) { hb = -(camx + ((8192 - camx) >> 3)); vb = camy - 12 + ((2048 - camy) >> 3); }
+	else { hb = ((camx + camy) >> 1) - camx; vb = camy - 12; }
+	const int px = (sx - hb) & 511, py = (s + vb) & 255;
+	const uint16_t word = be16(b + 40 + (mode == 1 ? 0 : (((px >> 3) + (py >> 3)) & 3) * 2));
+	const int v = word & 0x7FF;
+	int pid;
+	if (v < 1280) pid = v;
+	else if (v >= 0xB000 / 32 && v < 0xB000 / 32 + 128) pid = 1280 + v - 0xB000 / 32;
+	else if (v >= 0xD000 / 32 && v < 0xD000 / 32 + 96) pid = 1408 + v - 0xD000 / 32;
+	else pid = 1504 + v - 0xF400 / 32;
+	const uint8_t byte = b[be32(b + 16) + pid * 32 + (py & 7) * 4 + (px & 7) / 2];
+	const int e = (px & 1) ? (byte & 15) : (byte >> 4);
+	return e ? ((word >> 13) & 3) * 16 + e : 0;
 }
 
 static void save_frame(const uint8_t *pixels, int pitch, const uint16_t *pal)
@@ -604,7 +627,8 @@ static void save_frame(const uint8_t *pixels, int pitch, const uint16_t *pal)
 				/* REV: a background colour - the Genesis plane in front where it is not see-through */
 				static uint16_t gcol[64];
 				if (x == 0 && y == PLAT_TOP_BORDER) hg_colours(gcol);
-				const int e = hg_pixel(hg_c4 + x, (hg_c6 & 0x7FF) + gy);
+				int e = hg_pixel(hg_c4 + x, (hg_c6 & 0x7FF) + gy);
+				if (e < 0) e = hg_texture(hg_c4, hg_c6 & 0x7FF, x, y);
 				if (e) {
 					const uint16_t w = gcol[e];
 					*r++ = (uint8_t)(((w >> 1) & 7) * 255 / 7);

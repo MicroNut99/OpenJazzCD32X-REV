@@ -26,6 +26,7 @@ rm -f v*.bin f*.ppm
 DUMPVDP=1 "$FE" "$CORE" rom.bin 400 20 "" > log.txt 2>&1 || true
 bad=0
 for f in v*.bin; do
+  [ "$f" = v00000.bin ] && continue   # before the load
   python3 "$HERE/tools/genesis_check_vdp.py" --picodrive "$f" "$GB" - - "${f%.bin}.png" || bad=1
 done
 python3 - <<'PY'
