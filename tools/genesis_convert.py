@@ -82,8 +82,12 @@ def load_dump(path):
     pal = np.frombuffer(d[o:o + 768], np.uint8).reshape(256, 3).astype(np.float64); o += 768
     spal = np.frombuffer(d[o:o + 768], np.uint8).reshape(256, 3); o += 768
     tiles = np.frombuffer(d[o:o + nt * 1024], np.uint8).reshape(nt, 32, 32); o += nt * 1024
-    grid = np.frombuffer(d[o:o + 64 * 256 * 2], np.uint8).reshape(64, 256, 2)
-    return dict(type=typ, sky=sky, orb=orb, pal=pal, spal=spal, tiles=tiles, grid=grid)
+    grid = np.frombuffer(d[o:o + 64 * 256 * 2], np.uint8).reshape(64, 256, 2); o += 64 * 256 * 2
+    o += 256 * 4                                           # the sprites' palette histogram
+    put = []                                               # tiles the game puts in during play
+    if d[o:o + 4] == b'OJGS':
+        put = [t for t in d[o + 5:o + 5 + d[o + 4]] if t < nt]
+    return dict(type=typ, sky=sky, orb=orb, pal=pal, spal=spal, tiles=tiles, grid=grid, put=put)
 
 
 def q9(rgb):
@@ -126,7 +130,7 @@ def convert(dump, budget=MAX_PATTERNS, all_tiles=True):
     tiles, grid = dump['tiles'], dump['grid']
     nt = len(tiles)
     on_plane = (grid[:, :, 1] & 2) == 0
-    used = sorted(t for t in set(np.unique(grid[:, :, 0][on_plane]).tolist()) if t < nt)
+    used = sorted(t for t in set(np.unique(grid[:, :, 0][on_plane]).tolist()) | set(dump.get('put', [])) if t < nt)
     return convert_tiles(dump, used, budget, merge_ok=True)
 
 

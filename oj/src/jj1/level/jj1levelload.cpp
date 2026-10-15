@@ -1245,6 +1245,22 @@ int JJ1Level::load (char* fileName, bool checkpoint) {
 				const unsigned int n = oj32x_sprite_hist[i];
 				fputc(n >> 24, f); fputc(n >> 16, f); fputc(n >> 8, f); fputc(n, f);
 			}
+			// the tiles the game can put in during play (jj1level.cpp setTile): a destroyed
+			// block's tile (behaviour 21, multiA) and the one a MedGuardian leaves (41,
+			// magnitude): "OJGS", count, tiles
+			bool put[256] = { false };
+			for (int y = 0; y < LH; y++)
+				for (int x = 0; x < LW; x++) {
+					const JJ1EventType* es = &eventSet[grid[y][x].event];
+					if (!grid[y][x].event) continue;
+					if (es->movement == 21) put[(unsigned char)es->multiA] = true;
+					if (es->movement == 41) put[(unsigned char)es->magnitude] = true;
+				}
+			int nput = 0;
+			for (int i = 0; i < 256; i++) nput += put[i];
+			fwrite("OJGS", 1, 4, f);
+			fputc(nput, f);
+			for (int i = 0; i < 256; i++) if (put[i]) fputc(i, f);
 			fclose(f);
 		}
 	}

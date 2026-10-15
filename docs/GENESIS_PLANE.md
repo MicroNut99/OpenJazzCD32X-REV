@@ -31,8 +31,8 @@ makes from one level:
   game's speed.
 - 8 x 8 patterns, 4 bits a pixel, stored once (mirrored copies merged), at most 1600 (what video
   memory has room for); a level with more has its most similar patterns merged. The whole tile
-  set when it fits (so blocks the game changes during play are there too), else the tiles the
-  map uses.
+  set when it fits, else the tiles the map uses plus the tiles the game puts in during play (a
+  destroyed block's tile, the one a guardian leaves: the dump lists them, R4).
 - 16 name-table words per tile, the map (tile per cell, 255 = nothing: foreground tiles), the
   black cells (a bit map).
 
