@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""music_lengths.py - the length of every song WAV in music/ (J13c), for the CD player in the
+"""music_lengths.py - the length of every song WAV in music/, for the CD player in the
 credits: it plays a track once and then goes on to the next one, so it needs to know when a
 track ends (the CD commands report no "track finished").
     python3 tools/music_lengths.py tools/music_tracks.txt music port/music_lengths.h"""

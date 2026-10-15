@@ -7,7 +7,7 @@
    test 1: "SH2 READY FOR ISOLATED TEST: FFFF"). */
 /* OpenLara CD32X OL-1: 1 = the 68000 stays in the listener (no CMD 60) and the SH2s are
    released with COMM0 = COMM4 = 0 instead of M_OK/S_OK.  0 = original D32XR behaviour. */
-/* OJ-J4B DIAGNOSTICS SWITCH (with KOBO_DIAG_TEXT / KOBO_BOOT_TEXT in subcpu/main.c and
+/* OJ32X: DIAGNOSTICS SWITCH (with KOBO_DIAG_TEXT / KOBO_BOOT_TEXT in subcpu/main.c and
    OJ32X_DIAG_TEXT in port/plat_mars.c): 1 = the Genesis text (white start-up messages, green
    STATE codes) is switched on and drawn IN FRONT of the splash (DISPMODE bit 7, Kobo K18);
    0 = text off, the splash shows alone (OpenLara's release setting, OL-3). */
@@ -217,7 +217,7 @@ static uint32_t rd32(uint32_t off) {     /* big-endian long from the cart */
 #define SPL_W            320
 #define SPL_LINES        224
 #define SPL_PAL_OFS      (0x200 + SPL_W * SPL_LINES)
-/* OJ-J4B: the bar sits low on the picture, between the Jazz Jackrabbit logo and the
+/* OJ32X: the bar sits low on the picture, between the Jazz Jackrabbit logo and the
    (C) 1994 EPIC MEGAGAMES line, clear of the turtle on the right (Splash.png measured) */
 #define BAR_X0           56
 #define BAR_X1           236
@@ -266,10 +266,10 @@ static void splash_show(void) {
                 (const volatile uint16_t *)((volatile uint8_t *)SC_FRAMEBUFFER + SPL_PAL_OFS);
             for (i = 0; i < 256; i++) SC_CRAM[i] = pal[i];
         }
-        splash_bar(0, 1);                /* OJ-J4B: the empty bar (OL-7 had removed it) */
+        splash_bar(0, 1);                /* OJ32X: the empty bar (OL-7 had removed it) */
         flip_wait();
         if (pass == 0) SC_VDP_DISPMODE = OJ_DIAG_TEXT ? 0x0081 : 0x0001;                /* 256 colours: picture shows;
-                                                                   OJ-J4B: + 0x80 = the green/white
+                                                                   OJ32X: + 0x80 = the green/white
                                                                    diagnostic text in front (Kobo K18) */
     }
     splash_on = 1;
@@ -303,7 +303,7 @@ int main(void) {
     /* Genesis text layer ON (as Kobo's set_text): CMD 52 with COMM2 = 1 makes the Sub-CPU set
        VDP register 1 = 0x8174 (display on).  Without it the status codes were not visible
        (Fusion test: black screen with only the loading bar). */
-    SC_COMM2 = OJ_DIAG_TEXT;             /* OJ-J4B: Genesis text per the switch above (OL-3 had 0) */
+    SC_COMM2 = OJ_DIAG_TEXT;             /* OJ32X: Genesis text per the switch above (OL-3 had 0) */
     wait_cmd(52);
     show_status(0x4D01);
 #if CDL_TARGET_OPENLARA
@@ -334,7 +334,7 @@ int main(void) {
             wait_cmd(CMD_CHUNK_COMPARE);
             if (SC_COMM12 != 0) same = 0;
         }
-        /* OJ-J13C: quick check ON (OpenLara had it off) - the engine already in the cart from an
+        /* OJ32X: quick check ON (OpenLara had it off) - the engine already in the cart from an
            earlier boot is not copied again. Holding A+B+C at power-on copies it anyway: CMD 48
            (pad -> COMM8, main.c K32), bits A 0x40 B 0x10 C 0x20. */
         if (same) {
@@ -353,8 +353,8 @@ int main(void) {
         /* progress in the green text: STATE:4C00 .. 4C3F (chunk number; 64 chunks = 2 MB) */
         show_status((uint16_t)(0x4C00 | (c & 0xFF)));
 #if CDL_TARGET_OPENLARA
-        splash_progress(c + 1, 2 * nchunks);  /* OJ-J4B: the bar grows with every chunk (OL-7 had it off);
-                                                 OJ-J4D: to the half - the engine's data pack fills the rest */
+        splash_progress(c + 1, 2 * nchunks);  /* OJ32X: the bar grows with every chunk (OL-7 had it off),
+                                                 to the half - the engine's data pack fills the rest */
 #endif
     }
     if (bad) halt(0x4DE2);

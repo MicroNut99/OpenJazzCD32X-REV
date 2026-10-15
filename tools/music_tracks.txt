@@ -1,4 +1,4 @@
-# OpenJazz CD32X - music as CD audio (J10). One WAV per music file, named exactly like it with
+# OpenJazz CD32X - music as CD audio. One WAV per music file, named exactly like it with
 # .wav (44.1 kHz, 16-bit, stereo), in the folder music/ next to build.sh. build.sh then puts
 # them on the disc as these tracks and builds the engine with OJ32X_MUSIC 1.
 # track  music file

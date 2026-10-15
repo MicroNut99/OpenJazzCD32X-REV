@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""make_oj_sfx.py - Jazz Jackrabbit's sound effects -> a Sega CD PCM pack (J10)
+"""make_oj_sfx.py - Jazz Jackrabbit's sound effects -> a Sega CD PCM pack
     python3 tools/make_oj_sfx.py <data folder>/SOUNDS.000 cd32x/subcpu/ROMS/SFX00.BIN
 
 The pack format is OpenLara's / Kobo's KSFX (cd32x/subcpu/main.c pcm_load, CMD 53 with
@@ -16,15 +16,15 @@ All 22 sounds must fit the 64 KB: they are played at RATE and cut at MAX_SECS.""
 import struct, sys
 
 SRC_RATE, RATE, MAX_SECS, RAM, PAGE, TAIL = 11025, 5000, 1.0, 65536, 256, 16
-VOLUME = 96    # J13: PCM envelope (255 = full) - full volume was far too loud and distorted
-AMP = 0.75     # J13: samples at 3/4 of full scale (headroom against clipping)
+VOLUME = 96    # PCM envelope (255 = full) - full volume was far too loud and distorted
+AMP = 0.75     # samples at 3/4 of full scale (headroom against clipping)
 
 def sm8(v):
     m = min(126, int(round(abs(v) * 127)))       # 127 would give the 0xFF loop marker
     return (0x80 | m) if v >= 0 else m
 
 def lowpass(a, src, dst):
-    # J13f: remove what 5 kHz cannot hold before resampling (moving average over src/dst
+    # remove what 5 kHz cannot hold before resampling (moving average over src/dst
     # samples, twice) - without it the high parts folded back as a metallic, "modulated" sound
     w = max(1, int(round(src / dst)))
     for _ in range(2):

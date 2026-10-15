@@ -37,7 +37,7 @@ def main():
     screen = Image.new("RGB", (W, H))
     screen.paste(src, ((W - src.width) // 2, (H - src.height) // 2))
 
-    # J4b6: palette index 0 and the value 0x0000 are see-through on the 32X: with the Genesis
+    # palette index 0 and the value 0x0000 are see-through on the 32X: with the Genesis
     # display on, the Genesis layer showed through the black border lines (glitches at the top
     # of the splash in the emulator). Index 0 is never used; black = index 252 = 0x0400.
     colours = screen.getcolors(1 << 16) or []

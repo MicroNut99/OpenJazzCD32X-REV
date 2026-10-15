@@ -1,5 +1,5 @@
 #!/bin/bash
-# OpenJazz CD32X - bonus level packs (J18): for every BONUSMAP.nnn the PC build goes through the
+# OpenJazz CD32X - bonus level packs: for every BONUSMAP.nnn the PC build goes through the
 # menus to "Z Bonus levels" with T32X_BONUS_MAP=nnn and plays it for a few seconds with the common
 # pack mounted; what the bonus level needs that the common pack lacks becomes OJ<800+nnn>.PAK
 # (the map's tiles and events decoded, the bonus graphics, sprites, pictures).

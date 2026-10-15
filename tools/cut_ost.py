@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""cut_ost.py - one long soundtrack video -> the game's CD audio tracks (J11b)
+"""cut_ost.py - one long soundtrack video -> the game's CD audio tracks
 
     python3 tools/cut_ost.py videoplayback.mp4 music/        [--max 110] [--check]
 

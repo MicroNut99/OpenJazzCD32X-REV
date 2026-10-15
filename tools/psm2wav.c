@@ -1,8 +1,9 @@
 /*
  * OpenJazz CD32X - the game's music (.PSM, played by the libxmp bundled with OpenJazz) as WAV
- * files for CD audio (J10b). 44.1 kHz, 16-bit, stereo. J11c: the song repeats itself (as in
- * the game) until max seconds, then fades out over 3 s; the console repeats the CD track.
- *   psm2wav <in.PSM> <out.wav> [max seconds]
+ * files for CD audio. 44.1 kHz, 16-bit, stereo. The song repeats itself (as in the game)
+ * until max seconds, then fades out over 3 s; with the 4th argument 1 it is one complete pass
+ * instead (faded over its last 2 s). The console repeats the CD track.
+ *   psm2wav <in.PSM> <out.wav> [max seconds] [1 = one pass]
  */
 #include "xmp.h"
 #include <stdio.h>
@@ -16,7 +17,7 @@ int main(int argc, char **argv)
 {
 	if (argc < 3) { fprintf(stderr, "usage: psm2wav in.PSM out.wav [max seconds]\n"); return 2; }
 	const int max_s = argc > 3 ? atoi(argv[3]) : 120;
-	/* J11d: 4th argument 1 = one complete pass of the song (no repeats inside the file; the
+	/* 4th argument 1 = one complete pass of the song (no repeats inside the file; the
 	 * console repeats the CD track), the fade then covers the last 2 s of that pass */
 	const int once = argc > 4 ? atoi(argv[4]) : 0;
 	xmp_context c = xmp_create_context();

@@ -1,5 +1,5 @@
 #!/bin/bash
-# OpenJazz CD32X - full build (J5: the game with all levels):
+# OpenJazz CD32X - full build (the game with all levels):
 #   splash -> engine (mars/) -> ROM check (OpenLara's prep_openlara_cd.py) -> SH2 loader ->
 #   Sub-CPU/68000 -> disc image, then the same disc checks OpenLara's build.sh makes.
 # The loader (cd32x/sh2) and the Sub-CPU program (cd32x/subcpu) are OpenLara's, UNCHANGED;
@@ -16,9 +16,10 @@ grep -q '^#define CDL_TARGET_OPENLARA 1' "$HERE/cd32x/sh2/cdloader_sh2.c" \
   || { echo "*** cd32x/sh2/cdloader_sh2.c is not in OpenLara mode - stopping"; exit 1; }
 
 echo "==> splash";      python3 "$HERE/tools/make_boot_image.py" "$HERE/Splash.png" "$ROMS/IMAGE.RAW"
-echo "==> data packs";  # J5: the common pack (IMAGE8.RAW: menus, fonts, panel, all planet
-                        # screens; cart 0x100000) and one pack per level file (OJ<k>.PAK, cart
-                        # 0x280000), made by the PC build - see port/pack.h, tools/bake_levels.sh
+echo "==> data packs";  # the common pack (IMAGE8.RAW: menus, fonts, panel, demos, the file
+                        # catalogue; cart 0x100000), one world pack per planet and one pack per
+                        # bonus level (OJ<k>.PAK, cart 0x280000), made by the PC build - see
+                        # port/pack.h, tools/bake_levels.sh, tools/bake_bonus.sh
 DATA="${DATA:-$HERE/JazzJackRabbitGame}"
 [ -f "$DATA/PANEL.000" ] || { echo "*** no Jazz data in $DATA (set DATA=<folder>) - stopping"; exit 1; }
 make -C "$HERE/host" -j"${JOBS:-1}" >/dev/null
@@ -50,15 +51,15 @@ else
   rm -f "$ROMS"/OJ[0-5]*.PAK
   "$HERE/tools/bake_levels.sh" "$DATA" "$ROMS/IMAGE8.RAW" "$ROMS"
 fi
-# J18: the 30 bonus levels, one pack each (OJ800-OJ829)
+# the 30 bonus levels, one pack each (OJ800-OJ829)
 if [ "${LEVEL_PACKS:-}" = keep ] && ls "$ROMS"/OJ8*.PAK >/dev/null 2>&1 && [ -f "$ROMS/.bonus_v2" ]; then
   echo "    bonus packs: kept ($(ls "$ROMS"/OJ8*.PAK | wc -l))"
 else
   "$HERE/tools/bake_bonus.sh" "$DATA" "$ROMS/IMAGE8.RAW" "$ROMS"
-  touch "$ROMS/.bonus_v2"   # J19b: packs with the 64 KB map blocks (made again once)
+  touch "$ROMS/.bonus_v2"   # packs with the 64 KB map blocks (made again once)
 fi
 echo "==> sound effects"; python3 "$HERE/tools/make_oj_sfx.py" "$DATA/SOUNDS.000" "$ROMS/SFX00.BIN"
-# J19: Holiday Hare '95 as an episode of the Jazz CD menu (in place of "specific level"): its two
+# Holiday Hare '95 as an episode of the Jazz CD menu (in place of "specific level"): its two
 # world packs are baked against Jazz CD's common pack - of the files both use only MAINCHAR.000
 # differs (Jazz in his Christmas outfit), so that one is read from JAZZXMAS1995/ and goes into its
 # packs (T32X_BAKE_UNPACKED); a level pack is searched before the common pack
@@ -77,11 +78,11 @@ else
   echo "==> no JAZZXMAS1995/ folder: no Holiday Hare '95"
   rm -f "$ROMS"/OJ6*.PAK "$ROMS/SFX01.BIN" "$ROMS/.hh95_complete"
 fi
-# J10: music - WAVs in music/ (named like the game's music files, tools/music_tracks.txt)
+# music - WAVs in music/ (named like the game's music files, tools/music_tracks.txt)
 MUSIC_WAVS=$(ls "$HERE"/music/*.wav "$HERE"/music/*.WAV 2>/dev/null | wc -l)
 if [ "$MUSIC_WAVS" -gt 0 ]; then MUSIC_DEFS="-DOJ32X_MUSIC=1"; else MUSIC_DEFS=""; fi
 rm -f "$HERE/mars/obj/port/plat_mars.o" "$HERE/mars/obj/port/plat_mars.d"   # the switch lives there
-python3 "$HERE/tools/music_lengths.py" "$HERE/tools/music_tracks.txt" "$HERE/music" "$HERE/port/music_lengths.h"   # J13c: CD player
+python3 "$HERE/tools/music_lengths.py" "$HERE/tools/music_tracks.txt" "$HERE/music" "$HERE/port/music_lengths.h"   # CD player
 echo "==> engine";      make -C "$HERE/mars" EXTRA_DEFS="$MUSIC_DEFS"
 [ -f "$HERE/mars/OPENJAZZ.32X" ] || { echo "*** mars/OPENJAZZ.32X was not made - stopping"; exit 1; }
 echo "==> ROM check";   python3 "$HERE/cd32x/ref/openlara/tools/prep_openlara_cd.py" "$HERE/mars/OPENJAZZ.32X" "$ROMS/OPENLARA.32X"

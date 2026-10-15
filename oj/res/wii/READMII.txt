@@ -1,0 +1,19 @@
+OpenJazz for Wii
+
+Licensed under GPLv2. See included licenses.txt for details.
+
+OpenJazz written by AJ Thomson http://alister.eu/jazz/oj/
+Originally ported to the Wii by tehpola, maintained by carstene1ns.
+
+Installation:
+	Copy the contents of the archive into the /apps directory of your SD card.
+	Copy all of the JJ1 data files into application directory: /apps/OpenJazz
+
+Default Controls (hold the Wiimote sideways):
+	2:    shoot
+	1:    jump
+	A:    switch weapons
+	Home: Esc
+	+:    Pause
+
+Network games don't work yet, but the support is there in the code.

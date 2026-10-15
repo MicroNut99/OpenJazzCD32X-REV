@@ -31,7 +31,8 @@ FLAGSZ80 = -vb2
 DD = dd
 RM = rm -rf
 
-# OJ-J4C: IMAGE8.RAW = OpenJazz's data pack (cart slot 8 = 0x100000, see OPENJAZZ_CD32X_HANDOFF.md)
+# OJ32X: IMAGE8.RAW = OpenJazz's common data pack (cart slot 8 = 0x100000); OJ*.PAK = its
+# world and bonus packs, SFX*.BIN its sound effects (see README_SOURCE.md)
 TARGET = CDROMPlayer
 # ---------------------------------------------------------------------------------------------
 # KOBO: the SH2 program is built in ../sh2 as D32XR.32x.  It is copied (renamed) to

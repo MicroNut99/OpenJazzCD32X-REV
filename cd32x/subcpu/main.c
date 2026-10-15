@@ -90,7 +90,7 @@ extern int do_md_cmd3(int cmd, int arg1, int arg2, int arg3);
    0 = print_diag() prints nothing at all: every print_diag() call stays in the code, so
    setting 1 again brings all the text back.  (Chilly's white 32X start-up messages come
    from hw_md.s and are not affected.) */
-#define KOBO_DIAG_TEXT        0          /* OJ-J4B: on - green diagnostic text (CD32X boot handoff: diagnostics = 1) */
+#define KOBO_DIAG_TEXT        0          /* OJ32X: off for the release (1 while debugging the boot) */
 
 /* K30 - BOOT TEXT.  0 = the Genesis display is switched OFF at the very start of main(), so
    neither the green text nor Chilly's white 32X start-up messages appear (dev request): the
@@ -100,7 +100,7 @@ extern int do_md_cmd3(int cmd, int arg1, int arg2, int arg3);
                                                    the 68K; it only writes its heartbeat twice a second. */
 static int sub_quiet = 0;
 static int ol_game_running = 0;   /* OL-2b: STATE 4B10 seen - no more per-pass text */
-#define KOBO_BOOT_TEXT        1          /* OJ-J4B: on - white start-up messages (diagnostics = 1). K31: on - Chilly's white 32X start-up messages show
+#define KOBO_BOOT_TEXT        1          /* OJ32X: on - Chilly's white 32X start-up messages show (K31)
                                                    (green text stays off: KOBO_DIAG_TEXT 0) */
 
 #define LEGACY_68K_CART 0
@@ -357,7 +357,8 @@ static int pcm_load(const char *name) {           /* OL-6: SFX<level>.BIN */
 static uint8_t bram_work[0x640];
 static uint8_t bram_str[16];
 static uint8_t bram_buf[BRAM_BYTES];
-static const char bram_name[12] = "OPENJAZZ_JJ";   /* OJ-J11: OpenJazz's own file (OL-5 had OPENLARA_TR) */
+static const char bram_name[12] = "OPENJAZZ_JJ";   /* OJ32X: OpenJazz's own file name (OL-5 had OPENLARA_TR); backup RAM
+                                                       is no longer used by OpenJazz - its saves use the cart (CMD 58/61) */
 static uint8_t bram_param[14];
 static int bram_ready = 0;
 
@@ -642,7 +643,7 @@ int main(void)
                 strcpy(img_name, ol_level_files[img_idx - OL_LEVEL_BASE]);   /* OL-2 */
                 cur_img = OL_LEVEL_SLOT;
             }
-            else if (img_idx >= 200 && img_idx < 1200) {   /* OJ-J5: OpenJazz level packs (port/pack.h) */
+            else if (img_idx >= 200 && img_idx < 1200) {   /* OJ32X: OpenJazz world and bonus packs OJ<n-200>.PAK (port/pack.h) */
                 sprintf(img_name, "OJ%03d.PAK", img_idx - 200);
                 cur_img = 20;                               /* cart 20 * 128 KB = 0x280000 */
             }

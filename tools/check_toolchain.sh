@@ -1,5 +1,5 @@
 #!/bin/bash
-# OpenJazz CD32X J1 - what the Sega toolchain offers for C++ (OpenJazz is C++14 and uses
+# OpenJazz CD32X - what the Sega toolchain offers for C++ (OpenJazz is C++14 and uses
 # exceptions for its error paths).  Paste the whole output back.
 T=/opt/toolchains/sega
 echo "== compilers";   ls $T/sh-elf/bin/ 2>/dev/null | grep -E 'gcc|g\+\+|c\+\+' || echo "no $T/sh-elf/bin"

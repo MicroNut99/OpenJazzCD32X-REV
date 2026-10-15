@@ -31,7 +31,7 @@ Build names (J4 … J19) refer to the project log `OPENJAZZ_CD32X_HANDOFF.md`.
 ## 2. Boot path
 
 One proven boot path, never two: OpenLara's SH2 loader and Sub-CPU program, unchanged except for
-tagged switches (`OJ-J4B`, `OJ-J5`, `OJ-J11`, `OJ-J13C`). The engine is just the file the loader
+switches marked `OJ32X` in the source. The engine is just the file the loader
 copies.
 
 1. **[BOOT] stages 0–5 unchanged.** The SH2 program booted from the frame buffer is the small
@@ -45,7 +45,7 @@ copies.
 
 ### 2.1 Quick start
 The loader's three-chunk compare (CMD 47 on first, middle and last chunk) exists but is disabled in
-OpenLara (`if (same && 0)`, see [OPENLARA] §2.3). Enabled (`OJ-J13C`), it skips the engine copy when
+OpenLara (`if (same && 0)`, see [OPENLARA] §2.3). Enabled here, it skips the engine copy when
 the cart already holds it. The engine does the same for its common pack (CMD 47 on three chunks
 plus the pack header and length in the cart). **A+B+C held at power-on** (read with CMD 48) forces
 both copies. Result on hardware: the second boot reaches the main menu in seconds instead of about
@@ -110,7 +110,7 @@ picture line (65,535 bytes) must be baked as 256-wide pictures – missing that 
 64 KB blocks out and ran the console out of memory.
 
 **Mapping on the Sub-CPU side.** CMD 38 id 1–99 -> `IMAGE<n>.RAW` at slot n × 128 KB; ids
-200–1199 -> `OJ<id-200>.PAK` at slot 20 (`0x280000`) (`OJ-J5`).
+200–1199 -> `OJ<id-200>.PAK` at slot 20 (`0x280000`).
 
 ### 3.3 Loading speed
 About **1 s per 32 KB chunk** (~30 KB/s) against ~150 KB/s for the drive: the cost is per command
@@ -374,7 +374,7 @@ set-up menu now saves when it is left. The piece is written by the 68000 and rea
 
 The source export contains the engine changes (`oj/`, marked `PORT32X`, also as
 `OPENJAZZ_PORT32X.patch` against upstream), the port layer (`port/`), the boot programs
-(`cd32x/`, changes marked `OJ-…`), the PC host build and regression references, the pack, music
+(`cd32x/`, changes marked `OJ32X`), the PC host build and regression references, the pack, music
 and sound tools, and the documents. It contains **no game data**: the build reads a copy of the
 game (and optionally Holiday Hare '95) from folders next to `build.sh` and produces all packs,
 sound packs and music tracks from it.

@@ -1,4 +1,4 @@
-# OpenJazz CD32X - the SH2 engine (J4a): the game + port layer, linked as a 32X cartridge
+# OpenJazz CD32X - the SH2 engine: the game + port layer, linked as a 32X cartridge
 # image for the CD32X loader (OpenLara's), with Tyrian's start-up code.
 #   make -k -C mars 2>&1 | tee mars_log.txt
 # Results: mars/openjazz32x.elf / .bin / .map, mars/OPENJAZZ.32X (via tools/make_oj_rom.py),
@@ -44,16 +44,18 @@ DEFS   := -DOJ32X -DOJ32X_MARS -DOJ_SDL1 -DPORTABLE -DNDEBUG \
           -DOJ_URL=\"http://alister.eu/jazz/oj/\" -DOJ_BUGREPORT=\"https://github.com/AlisterT/openjazz/issues\" \
           -DLIBXMP_CORE_PLAYER -DLIBXMP_STATIC -DXMP_SYM_VISIBILITY
 INCS   := -I$(PORT)/include -I$(PORT) -I$(SRC) -I$(EXT)/argparse -I$(EXT)/miniz -I$(EXT)/xmp -I$(EXT)/xmp/src -I$(EXT)/stb
-# J10: build.sh passes EXTRA_DEFS=-DOJ32X_MUSIC=1 when music/*.wav exist
+# build.sh passes EXTRA_DEFS=-DOJ32X_MUSIC=1 when music/*.wav exist
 DEFS += $(EXTRA_DEFS)
-# J14: the frame profiler box in levels - off (J15d); add -DOJ32X_PROFILE to bring it back
-# J15: the line-table scrolling renderer (remove for the old full-redraw renderer)
+# the frame profiler box in levels - off; add -DOJ32X_PROFILE to bring it back
+# the line-table scrolling renderer (remove for the old full-redraw renderer)
 DEFS += -DOJ32X_SCROLL
-# J16 speed switches (each can be removed on its own):
+# speed switches (each can be removed on its own):
 #   OJ32X_FAST_CODE   pixel routines in SDRAM, compiled for speed
 #   OJ32X_PANEL_DIFF  status panel drawn in SDRAM, only changed rows copied to the frame buffer
 #   OJ32X_FLIP_ASYNC  presenting only requests the swap; the logic runs while it waits
 DEFS += -DOJ32X_FAST_CODE -DOJ32X_PANEL_DIFF -DOJ32X_FLIP_ASYNC
+# 32-bit source reads in the blits (OJ32X_LONG_READS); Mode switches them while playing
+DEFS += -DOJ32X_LONG_READS
 CXXFLAGS := -std=gnu++14 $(OPT) $(DEFS) $(INCS) -fno-threadsafe-statics -Wall -Wno-unused-result -Wno-narrowing -MMD -MP
 CFLAGS   := -std=gnu11 $(OPT) $(DEFS) $(INCS) -w -MMD -MP
 
@@ -105,10 +107,10 @@ clean:
 	rm -rf obj openjazz32x.elf openjazz32x.bin openjazz32x.map OPENJAZZ.32X report.txt
 .PHONY: all clean
 
-# J4c3: a changed Makefile (compiler settings) rebuilds every object
+# a changed Makefile (compiler settings) rebuilds every object
 $(OBJS) $(OBJDIR)/crt0_oj.o: Makefile
 
-# J7: header dependencies. Without them a changed header (e.g. jj1level.h, file.h) did not
+# header dependencies. Without them a changed header (e.g. jj1level.h, file.h) did not
 # rebuild the files that include it: objects with different ideas of a class's size were
-# linked together (J7: `new JJ1Level` still asked for the old 156,736 bytes).
+# linked together (`new JJ1Level` still asked for the old 156,736 bytes).
 -include $(OBJS:.o=.d)

@@ -1,0 +1,2625 @@
+diff --git a/oj/src/game/game.cpp b/oj/src/game/game.cpp
+index da9278b..562fade 100644
+--- a/oj/src/game/game.cpp
++++ b/oj/src/game/game.cpp
+@@ -204,6 +204,12 @@ int Game::playLevel (char* fileName, bool intro, bool checkpoint) {
+ 
+ 	} else if (levelType == LT_JJ1BONUS) {
+ 
++#if defined(OJ32X_MARS) && defined(OJ32X_NO_BONUS)
++		// PORT32X: build switch to leave the bonus levels out. Not set by default: bonus levels
++		// fit in memory because their map is read from the cart pack (jj1bonuslevel.h).
++		return E_NONE;
++#endif
++
+ 		JJ1BonusLevel *bonus;
+ 
+ 		try {
+diff --git a/oj/src/io/file.cpp b/oj/src/io/file.cpp
+index 9791b29..0f2810f 100644
+--- a/oj/src/io/file.cpp
++++ b/oj/src/io/file.cpp
+@@ -25,6 +25,12 @@
+ 
+ 
+ #include "file.h"
++#include <strings.h>
++#include <stdlib.h>
++#ifdef OJ32X
++#include "pack.h"
++#include "oj32x.h"
++#endif
+ 
+ #include "io/gfx/video.h"
+ #include "util.h"
+@@ -51,6 +57,51 @@
+ File::File (const char* name, int pathType, bool write) :
+ 	file(nullptr), filePath(nullptr), forWriting(write) {
+ 
++#ifdef OJ32X
++	// PORT32X: a file that is in one of the data packs in the RAM cart is opened there
++	// (fmemopen over the cart memory); only files no pack holds are opened normally.
++	oj32x_packs_ready();
++	packData = nullptr;
++	if (!write) {
++		const uint8_t* data;
++		uint32_t size;
++		bool fromPack = true;
++#ifndef OJ32X_MARS
++		// PORT32X (PC build, baking): T32X_BAKE_UNPACKED=<A,B,...> opens these files from the
++		// data folder even when a mounted pack holds a file of the same name. Holiday Hare '95
++		// is baked against Jazz CD's common pack, and its MAINCHAR.000 differs from Jazz CD's.
++		{
++			const char* un = getenv("T32X_BAKE_UNPACKED");
++			if (un) {
++				const size_t n = strlen(name);
++				for (const char* p = un; *p; ) {
++					const char* e = strchr(p, ',');
++					const size_t l = e ? (size_t)(e - p) : strlen(p);
++					if (l == n && strncasecmp(p, name, n) == 0) fromPack = false;
++					p += l + (e ? 1 : 0);
++				}
++			}
++		}
++#endif
++		if (fromPack && pack_file(name, &data, &size)) {
++			file = pack_fopen(name);
++			if (file) {
++				packData = data;
++				filePath = createString("pack/", name);
++#ifdef OJ32X_MARS
++				{	// PORT32X: the 32X error screens show the last log lines - name the file
++					char msg[32];
++					snprintf(msg, sizeof msg, "OPEN %s", name);
++					oj32x_log(msg);
++				}
++#endif
++				LOG_DEBUG("Opened file: %s", filePath);
++				return;
++			}
++		}
++	}
++#endif
++
+ 	Path* path = gamePaths.paths;
+ 
+ 	while (path) {
+@@ -123,6 +174,10 @@ bool File::open (const char* path, const char* name, bool write) {
+ 
+ 	if (file) {
+ 		LOG_DEBUG("Opened file: %s", filePath);
++#ifdef OJ32X
++		// PORT32X: the PC build records every file it opens for the pack it bakes (T32X_BAKE)
++		if (!write) pack_bake_file(name, filePath);
++#endif
+ 
+ 		return true;
+ 	}
+@@ -148,6 +203,13 @@ bool File::exists (const char * fileName, int pathType) {
+ 
+ 	bool exists = false;
+ 
++#ifdef OJ32X
++	// PORT32X: a file exists if a pack holds it, or the common pack's catalogue lists it as
++	// being on the disc (files a later pack brings in, e.g. a level's)
++	oj32x_packs_ready();
++	if (pack_exists(fileName)) return true;
++#endif
++
+ 	Path* path = gamePaths.paths;
+ 	while (path) {
+ 		// skip other paths
+@@ -392,6 +454,83 @@ void File::storeData (const void* data, int length) {
+  *
+  * @return Buffer containing the block of data
+  */
++#ifdef OJ32X
++/**
++ * PORT32X: a block of the file in place when the file is in a cart pack (no copy in SDRAM),
++ * otherwise a copy as loadBlock makes it.
++ */
++unsigned char * File::mapBlock (int length) {
++
++	if (packData) {
++		unsigned char* p = const_cast<unsigned char*>(packData) + ftell(file);
++		fseek(file, length, SEEK_CUR);
++		return p;
++	}
++
++	return loadBlock(length);
++
++}
++#endif
++
++
++#ifdef OJ32X
++// PORT32X: reading pictures and blocks that the PC build stored decoded in a cart pack
++// (descriptions in file.h). The 32X then uses them in place in the cart instead of
++// decoding them into its 256 KB of SDRAM.
++
++const unsigned char* File::packPicture (int width, int height, int length) {
++
++	if (!packData) return nullptr;
++	uint32_t end;
++	const uint8_t* pic = pack_file_picture(filePath, tell(), width, height, &end);
++	if (!pic || (int)end != tell() + length) return nullptr;
++	seek(end, true);
++	return pic;
++
++}
++
++
++unsigned char* File::loadRLEPacked (int length, bool& mapped) {
++
++	mapped = false;
++	const int start = tell();
++	if (packData) {
++		int w, h;
++		uint32_t end;
++		const uint8_t* p = pack_file_picture_any(filePath, start, &w, &h, &end);
++		if (p && w * h == length) {
++			seek(end, true);
++			mapped = true;
++			return const_cast<unsigned char*>(p);
++		}
++	}
++	unsigned char* pixels = loadRLE(length);
++	// Recorded for the pack as a picture of one line, or 256 pixels wide when the block is
++	// longer than a line may be (65,535). The bonus maps' 64 KB blocks need the second form;
++	// without it they were not in the packs and the 32X ran out of memory decoding them.
++	if (length <= 65535) bakePicture(start, pixels, length, 1);
++	else if (length % 256 == 0 && length / 256 <= 65535) bakePicture(start, pixels, 256, length / 256);
++	return pixels;
++
++}
++
++
++const unsigned char* File::packPictureAny (int* width, int* height, uint32_t* end) {
++
++	if (!packData) return nullptr;
++	return pack_file_picture_any(filePath, tell(), width, height, end);
++
++}
++
++
++void File::bakePicture (int start, const unsigned char* pixels, int width, int height) {
++
++	pack_bake_file_picture(filePath, start, tell(), pixels, width, height);
++
++}
++#endif
++
++
+ unsigned char * File::loadBlock (int length) {
+ 
+ 	unsigned char *buffer;
+@@ -581,8 +720,27 @@ SDL_Surface* File::loadSurface (int width, int height, bool checkSize) {
+ 	SDL_Surface* surface;
+ 	unsigned char* pixels;
+ 
++#ifdef OJ32X
++	// PORT32X: a picture the pack holds decoded is taken from there instead of being decoded
++	// again (decoding needs width x height bytes of SDRAM: 64 KB for a full screen)
++	const int start = tell();
++	if (packData) {
++		uint32_t end;
++		const uint8_t* pic = pack_file_picture(filePath, start, width, height, &end);
++		if (pic) {
++			seek(end, true);
++			return video.createSurface(pic, width, height);
++		}
++	}
++#endif
++
+ 	pixels = loadRLE(width * height, checkSize);
+ 
++#ifdef OJ32X
++	// PORT32X: the PC build records the decoded picture for the pack (T32X_BAKE)
++	pack_bake_file_picture(filePath, start, tell(), pixels, width, height);
++#endif
++
+ 	surface = video.createSurface(pixels, width, height);
+ 
+ 	delete[] pixels;
+diff --git a/oj/src/io/file.h b/oj/src/io/file.h
+index cf009ca..ce42ad4 100644
+--- a/oj/src/io/file.h
++++ b/oj/src/io/file.h
+@@ -52,6 +52,9 @@ class File {
+ 		FILE* file;
+ 		char* filePath;
+ 		bool  forWriting;
++#ifdef OJ32X
++		const unsigned char* packData; ///< PORT32X: start of the file in a cart pack, or null
++#endif
+ 
+ 		bool open (const char* path, const char* name, bool write);
+ 
+@@ -77,6 +80,22 @@ class File {
+ 		void               storeString (const char *string);
+ 		void               storeData   (const void* data, int length);
+ 		unsigned char*     loadBlock   (int length);
++#ifdef OJ32X
++		/// PORT32X: like loadBlock, but a file from a cart pack gives a pointer into the cart
++		/// (read-only, never freed: check with oj32xIsPackData before delete[])
++		unsigned char*     mapBlock    (int length);
++		/// PORT32X: the picture at the current position, already decoded in a cart pack
++		/// (the file then continues after its <length> bytes); null if not there
++		const unsigned char* packPicture (int width, int height, int length);
++		/// PORT32X: the picture at the current position in a cart pack, any size
++		const unsigned char* packPictureAny (int* width, int* height, uint32_t* end);
++		/// PORT32X: an RLE block of <length> bytes - in place from a cart pack (mapped = true,
++		/// never delete[] it) or decoded as loadRLE does (mapped = false); the PC build records it
++		unsigned char*     loadRLEPacked (int length, bool& mapped);
++		/// PORT32X: PC build - record the picture decoded from file bytes <start>..now for the
++		/// pack being baked (T32X_BAKE); does nothing on the 32X
++		void               bakePicture (int start, const unsigned char* pixels, int width, int height);
++#endif
+ 		unsigned char*     loadRLE     (int length, bool checkSize = true);
+ 		void               skipRLE     ();
+ 		unsigned char*     loadLZ      (int compressedLength, int length);
+diff --git a/oj/src/io/gfx/font.cpp b/oj/src/io/gfx/font.cpp
+index 9c7cd7a..ec8bd62 100644
+--- a/oj/src/io/gfx/font.cpp
++++ b/oj/src/io/gfx/font.cpp
+@@ -22,6 +22,9 @@
+ 
+ #include "io/file.h"
+ #include "font.h"
++#ifdef OJ32X
++#include "oj32x.h"
++#endif
+ #include "video.h"
+ #include "io/log.h"
+ 
+@@ -144,6 +147,11 @@ Font::Font (const char* fileName) {
+ 	} else
+ 		LOG_WARN("Could not pack font atlas!");
+ 
++#ifdef OJ32X
++	// PORT32X: the finished atlas is swapped for the identical picture in the cart pack and
++	// the SDRAM copy freed (the PC build records it for the pack instead)
++	characterAtlas = oj32x_freeze(characterAtlas);
++#endif
+ 	// Delete single char surfaces
+ 	for (int i = 0; i < nCharacters; i++) {
+ 		if(rects[i].w > 0 && rects[i].h > 0)
+@@ -253,6 +261,11 @@ Font::Font (unsigned char* pixels, bool big) {
+ 	} else
+ 		LOG_WARN("Could not pack font atlas!");
+ 
++#ifdef OJ32X
++	// PORT32X: the finished atlas is swapped for the identical picture in the cart pack and
++	// the SDRAM copy freed (the PC build records it for the pack instead)
++	characterAtlas = oj32x_freeze(characterAtlas);
++#endif
+ 	// Delete single char surfaces
+ 	for (int i = 0; i < nCharacters; i++)
+ 		video.destroySurface(chars[i]);
+@@ -374,6 +387,11 @@ Font::Font (bool bonus) {
+ 	} else
+ 		LOG_WARN("Could not pack font atlas!");
+ 
++#ifdef OJ32X
++	// PORT32X: the finished atlas is swapped for the identical picture in the cart pack and
++	// the SDRAM copy freed (the PC build records it for the pack instead)
++	characterAtlas = oj32x_freeze(characterAtlas);
++#endif
+ 	// Delete single char surfaces
+ 	for (int i = 0; i < nCharacters; i++)
+ 		video.destroySurface(chars[i]);
+diff --git a/oj/src/io/gfx/paletteeffects.cpp b/oj/src/io/gfx/paletteeffects.cpp
+index e051a2b..5d36728 100644
+--- a/oj/src/io/gfx/paletteeffects.cpp
++++ b/oj/src/io/gfx/paletteeffects.cpp
+@@ -22,6 +22,9 @@
+ 
+ 
+ #include "paletteeffects.h"
++#ifdef OJ32X
++#include "oj32x.h"
++#endif
+ #include "video.h"
+ 
+ #include "jj1/level/jj1level.h"
+@@ -477,6 +480,25 @@ void SkyPaletteEffect::apply (SDL_Color* shownPalette, bool direct, int mspf, bo
+ 	y = ((canvasH - 34) / 100) + 1;
+ 	count = (((position * speed) / y) >> 20) % 255;
+ 
++#ifdef OJ32X_SCROLL
++	// PORT32X: the scrolling renderer (OJ32X_SCROLL) keeps the sky in its frame-buffer ring and
++	// does not redraw it: sky pixel colours are numbered by ring row (two rows per palette
++	// entry, ring row = world row % 200). Instead of moving the pixels, the 100 sky entries are
++	// rotated so that each ring row gets the colour of the screen line it is shown on: ring
++	// band k is on screen line (2k - vY) mod 200.
++	int ringVY;
++	if (oj32x_scroll_active(&ringVY) && amount == 100) {
++		SDL_Color turned[100];
++		for (int k = 0; k < 100; k++) {
++			const int line = ((2 * k - ringVY) % 200 + 200) % 200;
++			turned[k] = skyPalette[(count + line / 2) % 255];
++		}
++		if (direct) video.changePalette(turned, first, amount);
++		else memcpy(shownPalette + first, turned, sizeof(SDL_Color) * amount);
++		return;
++	}
++#endif
++
+ 	if (direct) {
+ 
+ 		if (count > 255 - amount) {
+diff --git a/oj/src/io/gfx/video.cpp b/oj/src/io/gfx/video.cpp
+index 18cf378..aaccec1 100644
+--- a/oj/src/io/gfx/video.cpp
++++ b/oj/src/io/gfx/video.cpp
+@@ -27,6 +27,9 @@
+ 
+ #include "paletteeffects.h"
+ #include "video.h"
++#ifdef OJ32X
++#include "oj32x.h"
++#endif
+ 
+ #ifdef SCALE
+ 	#include <scalebit.h>
+@@ -53,6 +56,20 @@ SDL_Surface* Video::createSurface (const unsigned char * pixels, int width, int
+ 
+ 	// Create the surface
+ 	SDL_Surface *ret = nullptr;
++#ifdef OJ32X
++	// PORT32X: pixels given here never change afterwards, so the surface uses the identical
++	// picture from the cart pack in place (port/sdl_oj.cpp oj32x_cart_surface); a picture the
++	// pack lacks stays in SDRAM. The PC build records the picture for the pack.
++	if (pixels) {
++		ret = oj32x_cart_surface(pixels, width, height);
++		if (!ret) {
++			LOG_FATAL("Could not create surface: %s", SDL_GetError());
++			return nullptr;
++		}
++		video.restoreSurfacePalette(ret);
++		return ret;
++	}
++#endif
+ #if OJ_SDL3
+ 	ret = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_INDEX8);
+ 	if(ret) {
+diff --git a/oj/src/io/log.cpp b/oj/src/io/log.cpp
+index 9d2ea85..825c471 100644
+--- a/oj/src/io/log.cpp
++++ b/oj/src/io/log.cpp
+@@ -17,6 +17,9 @@
+  */
+ 
+ #include "log.h"
++#ifdef OJ32X_MARS
++#include "oj32x.h"
++#endif
+ #include "file.h"
+ #include "util.h"
+ #include <cstdarg>
+@@ -270,6 +273,18 @@ void Log::log(int lvl, const char *file, int line, const char *fmt, ...) {
+ 		(lvl == LL_WARN) ? ANDROID_LOG_WARN :
+ 		(lvl == LL_INFO) ? ANDROID_LOG_INFO : ANDROID_LOG_DEBUG,
+ 		"OpenJazz", outbuffer);
++#elif defined(OJ32X_MARS)
++	// PORT32X: the 32X has no console and no log file. Warnings and errors are kept as the
++	// "last log" lines shown on the platform's error screens; the HTML log queue is not kept
++	// (it would only cost SDRAM).
++	if (lvl < LL_WARN) return;
++	char outbuffer[96];
++	va_list args;
++	va_start(args, fmt);
++	vsnprintf(outbuffer, sizeof(outbuffer), fmt, args);
++	va_end(args);
++	(void)file; (void)line;
++	oj32x_log(outbuffer);
+ #else
+ 	// get current time
+ 	time_t t = time(nullptr);
+diff --git a/oj/src/io/sound.cpp b/oj/src/io/sound.cpp
+index 9f5be2d..5afbe3b 100644
+--- a/oj/src/io/sound.cpp
++++ b/oj/src/io/sound.cpp
+@@ -24,6 +24,9 @@
+ 
+ #include "file.h"
+ #include "sound.h"
++#ifdef OJ32X_MARS
++#include "oj32x.h"
++#endif
+ #include "util.h"
+ #include "io/log.h"
+ #include "platforms/platforms.h"
+@@ -293,7 +296,14 @@ void openAudio () {
+  */
+ void closeAudio () {
+ 	stopMusic();
++#ifdef OJ32X
++	// PORT32X: audio may never have been opened (no xmp context then); upstream frees the
++	// context unconditionally
++	if (xmpC) xmp_free_context(xmpC);
++	xmpC = nullptr;
++#else
+ 	xmp_free_context(xmpC);
++#endif
+ 
+ #if OJ_SDL3
+ 	SDL_CloseAudioDevice(SDL_GetAudioStreamDevice(audioStream));
+@@ -325,6 +335,14 @@ void closeAudio () {
+  * @param restart Restart music when same file is played.
+  */
+ void playMusic (const char * fileName, bool restart) {
++#ifdef OJ32X_MARS
++	// PORT32X: the music is CD audio. Each music file has its own disc track
++	// (tools/music_tracks.txt); the modules are rendered to those tracks on the PC.
++	// Music "volume" 0 means off; the file is remembered so switching on resumes it.
++	if (musicVolume > 0) oj32x_music(fileName, restart);
++	else oj32x_music_remember(fileName);
++	return;
++#endif
+ 	/* Only stop any existing music playing, if a different file
+ 	   should be played or a restart has been requested. */
+ 	if ((currentMusic && (strcmp(fileName, currentMusic) == 0)) && !restart)
+@@ -397,6 +415,10 @@ void pauseMusic (bool pause) {
+  * Stop the current music.
+  */
+ void stopMusic () {
++#ifdef OJ32X_MARS
++	oj32x_music(nullptr, false);  // PORT32X: stop the CD audio track
++	return;
++#endif
+ 	// Stop the music playing
+ 	LockAudio();
+ 
+@@ -435,6 +457,12 @@ int getMusicVolume () {
+  */
+ void setMusicVolume (int volume) {
+ 	musicVolume = CLAMP(volume, 0, MAX_VOLUME);
++#ifdef OJ32X_MARS
++	// PORT32X: CD audio has no volume control on this path: 0 stops the music, anything
++	// higher plays it (the set-up menu shows an on/off switch)
++	oj32x_music_volume(musicVolume);
++	return;
++#endif
+ 
+ 	// only access music player settings when playing
+ 	if (xmpC && xmp_get_player(xmpC, XMP_PLAYER_STATE) == XMP_STATE_PLAYING)
+@@ -664,6 +692,12 @@ void freeSounds() {
+  * @param index Number of the sound to play
+  */
+ void playSound(SE::Type index) {
++#ifdef OJ32X_MARS
++	// PORT32X: sound effects play on the Sega CD's PCM chip, from a pack loaded at start-up
++	// (SFX00.BIN, made by tools/make_oj_sfx.py). Effects "volume" 0 means off.
++	if (index != SE::NONE && soundVolume > 0) oj32x_sfx(static_cast<int>(index));
++	return;
++#endif
+ 	// silently ignore
+ 	if (!soundsLoaded || index == SE::NONE) return;
+ 
+diff --git a/oj/src/jj1/bonuslevel/jj1bonuslevel.cpp b/oj/src/jj1/bonuslevel/jj1bonuslevel.cpp
+index c868799..4745c5a 100644
+--- a/oj/src/jj1/bonuslevel/jj1bonuslevel.cpp
++++ b/oj/src/jj1/bonuslevel/jj1bonuslevel.cpp
+@@ -24,6 +24,11 @@
+ 
+ #include "jj1bonuslevelplayer.h"
+ #include "jj1bonuslevel.h"
++#include <stdlib.h>
++#include <stdio.h>
++#ifdef OJ32X
++#include "oj32x.h"
++#endif
+ 
+ #include "game/game.h"
+ #include "game/gamemode.h"
+@@ -143,7 +148,14 @@ int JJ1BonusLevel::loadTiles (char *fileName) {
+ 	}
+ 
+ 	// Load background
++#ifdef OJ32X
++	bool bgMapped, tsMapped;
++	// PORT32X: background and tile graphics in place from the cart pack, decoded by the PC
++	// build (freed below only when they were decoded here)
++	pixels = file->loadRLEPacked(832 * 20, bgMapped);
++#else
+ 	pixels = file->loadRLE(832 * 20);
++#endif
+ 	sorted = new unsigned char[512 * 20];
+ 
+ 	for (count = 0; count < 20; count++) memcpy(sorted + (count * 512), pixels + (count * 832), 512);
+@@ -151,13 +163,20 @@ int JJ1BonusLevel::loadTiles (char *fileName) {
+ 	background = video.createSurface(sorted, 512, 20);
+ 
+ 	delete[] sorted;
++#ifdef OJ32X
++	if (!bgMapped)
++#endif
+ 	delete[] pixels;
+ 
+ 	// Load palette
+ 	file->loadPalette(palette);
+ 
+ 	// Load tile graphics
++#ifdef OJ32X
++	pixels = file->loadRLEPacked(1024 * 60, tsMapped);
++#else
+ 	pixels = file->loadRLE(1024 * 60);
++#endif
+ 	tileSet = video.createSurface(pixels, 32, 32 * 60);
+ 
+ 	// Create mask
+@@ -178,6 +197,9 @@ int JJ1BonusLevel::loadTiles (char *fileName) {
+ 
+ 	}
+ 
++#ifdef OJ32X
++	if (!tsMapped)
++#endif
+ 	delete[] pixels;
+ 
+ 	return E_NONE;
+@@ -201,6 +223,21 @@ JJ1BonusLevel::JJ1BonusLevel (Game* owner, char * fileName, bool multi) : Level(
+ 	char *string, *fileString;
+ 	int count, x, y;
+ 
++#ifdef OJ32X
++#ifndef OJ32X_MARS
++	// PORT32X (PC build, baking): T32X_BONUS_MAP=n plays BONUSMAP.n whichever bonus level
++	// the menu starts - tools/bake_bonus.sh uses it to make one pack per bonus map
++	char bonusOverride[16];
++	if (getenv("T32X_BONUS_MAP")) {
++		snprintf(bonusOverride, sizeof bonusOverride, "BONUSMAP.%03d", atoi(getenv("T32X_BONUS_MAP")));
++		fileName = bonusOverride;
++	}
++#endif
++	// PORT32X: load this bonus map's pack (OJ8nn.PAK: map, graphics, pictures) into the
++	// cart, behind a loading screen; it replaces the planet pack (port/sdl_oj.cpp)
++	oj32x_level_pack(fileName);
++#endif
++
+ 	try {
+ 
+ 		font = new Font(true);
+@@ -306,6 +343,12 @@ JJ1BonusLevel::JJ1BonusLevel (Game* owner, char * fileName, bool multi) : Level(
+ 
+ 
+ 	// Load tiles
++#ifdef OJ32X
++	// PORT32X: the tile plane in place from the pack (see jj1bonuslevel.h); upstream's clip
++	// of tile numbers to 59 is done by tileAt()
++	mapTiles = file->loadRLEPacked(BLW * BLH, tilesMapped);
++	memset(clearedEvents, 0, sizeof clearedEvents);
++#else
+ 	buffer = file->loadRLE(BLW * BLH);
+ 
+ 	for (y = 0; y < BLH; y++) {
+@@ -321,6 +364,7 @@ JJ1BonusLevel::JJ1BonusLevel (Game* owner, char * fileName, bool multi) : Level(
+ 	}
+ 
+ 	delete[] buffer;
++#endif
+ 
+ 
+ 	// Load event properties
+@@ -354,6 +398,10 @@ JJ1BonusLevel::JJ1BonusLevel (Game* owner, char * fileName, bool multi) : Level(
+ 
+ 
+ 	// Load event mapping
++#ifdef OJ32X
++	// PORT32X: the event plane in place from the pack (see jj1bonuslevel.h)
++	mapEvents = file->loadRLEPacked(BLW * BLH, eventsMapped);
++#else
+ 	buffer = file->loadRLE(BLW * BLH);
+ 
+ 	for (y = 0; y < BLW; y++) {
+@@ -365,6 +413,7 @@ JJ1BonusLevel::JJ1BonusLevel (Game* owner, char * fileName, bool multi) : Level(
+ 	}
+ 
+ 	delete[] buffer;
++#endif
+ 
+ 
+ 	// Load sound map
+@@ -437,6 +486,10 @@ JJ1BonusLevel::~JJ1BonusLevel () {
+ 
+ 	video.destroySurface(tileSet);
+ 	video.destroySurface(background);
++#ifdef OJ32X
++	if (!tilesMapped) delete[] const_cast<unsigned char*>(mapTiles);
++	if (!eventsMapped) delete[] const_cast<unsigned char*>(mapEvents);
++#endif
+ 
+ 	delete[] spriteSet;
+ 
+@@ -475,14 +528,24 @@ bool JJ1BonusLevel::isEvent (fixed x, fixed y) {
+  */
+ bool JJ1BonusLevel::checkMask (fixed x, fixed y) {
+ 
++#ifdef OJ32X
++	const unsigned char gev = eventAt(FTOT(y) & 255, FTOT(x) & 255);
++	// Bounce back
++	if ((eventSet[gev].used) && !(eventSet[gev].passable) && isEvent(x, y))
++#else
+ 	JJ1BonusLevelGridElement *ge = grid[FTOT(y) & 255] + (FTOT(x) & 255);
+ 
+ 	// Bounce back
+ 	if ((eventSet[ge->event].used) && !(eventSet[ge->event].passable) && isEvent(x, y))
++#endif
+ 		return true;
+ 
+ 	// Check the mask in the tile in question
++#ifdef OJ32X
++	return mask[tileAt(FTOT(y) & 255, FTOT(x) & 255)][((y >> 9) & 56) + ((x >> 12) & 7)];
++#else
+ 	return mask[ge->tile][((y >> 9) & 56) + ((x >> 12) & 7)];
++#endif
+ 
+ }
+ 
+@@ -509,9 +572,12 @@ void JJ1BonusLevel::receive (unsigned char* buffer) {
+ 
+ 		case MT_L_GRID:
+ 
++		// PORT32X: no network play on the 32X; the map there is read-only (cart pack)
++#ifndef OJ32X
+ 			if (buffer[4] == 0) grid[buffer[3]][buffer[2]].tile = buffer[5];
+ 			else if (buffer[4] == 2)
+ 				grid[buffer[3]][buffer[2]].event = buffer[5];
++#endif
+ 
+ 			break;
+ 
+@@ -559,21 +625,36 @@ int JJ1BonusLevel::step () {
+ 			int gridY = FTOT(playerY) & 255;
+ 
+ 			// Play sound if available
++#ifdef OJ32X
++			const unsigned char gev = eventAt(gridY, gridX);
++			playSound(eventSet[gev].sound);
++
++			switch (eventSet[gev].type) {
++#else
+ 			playSound(eventSet[grid[gridY][gridX].event].sound);
+ 
+ 			switch (eventSet[grid[gridY][gridX].event].type) {
++#endif
+ 
+ 				case 1: // Extra time
+ 
+ 					addTimer(60);
++#ifdef OJ32X
++					clearEvent(gridY, gridX);
++#else
+ 					grid[gridY][gridX].event = 0;
++#endif
+ 
+ 					break;
+ 
+ 				case 2: // Gem
+ 
+ 					bonusPlayer->addGem();
++#ifdef OJ32X
++					clearEvent(gridY, gridX);
++#else
+ 					grid[gridY][gridX].event = 0;
++#endif
+ 
+ 					if (bonusPlayer->getGems() >= items) {
+ 
+@@ -671,7 +752,11 @@ void JJ1BonusLevel::draw () {
+ 			int levelY = FTOI(fwdY + MUL(nX, sideY));
+ 
+ 			row[x] = static_cast<unsigned char*>(tileSet->pixels)
++#ifdef OJ32X
++				[(tileAt(ITOT(levelY) & 255, ITOT(levelX) & 255) << 10) +
++#else
+ 				[(grid[ITOT(levelY) & 255][ITOT(levelX) & 255].tile << 10) +
++#endif
+ 					((levelY & 31) * tileSet->pitch) + (levelX & 31)];
+ 
+ 		}
+@@ -694,8 +779,12 @@ void JJ1BonusLevel::draw () {
+ 			fixed divisor = F16 + MUL(sX, playerSin) - MUL(sY, playerCos);
+ 
+ 			if (FTOI(divisor) > 8) {
++#ifdef OJ32X
++				unsigned char event = eventAt((evY + FTOT(playerY)) & 255, (evX + FTOT(playerX)) & 255);
++#else
+ 				unsigned char event = grid
+ 					[(evY + FTOT(playerY)) & 255][(evX + FTOT(playerX)) & 255].event;
++#endif
+ 
+ 				if (eventSet[event].type > 0) {
+ 					anim = animSet + eventSet[event].anim;
+diff --git a/oj/src/jj1/bonuslevel/jj1bonuslevel.h b/oj/src/jj1/bonuslevel/jj1bonuslevel.h
+index db1ed0c..1119fe4 100644
+--- a/oj/src/jj1/bonuslevel/jj1bonuslevel.h
++++ b/oj/src/jj1/bonuslevel/jj1bonuslevel.h
+@@ -72,7 +72,29 @@ class JJ1BonusLevel : public Level {
+ 		Sprite*                  spriteSet; ///< Sprite images
+ 		Anim                     animSet[BANIMS]; ///< Animations
+ 		JJ1BonusEventType        eventSet[BEVENTS]; ///< Event types
++#ifdef OJ32X
++		// PORT32X: the 256 x 256 map is not copied into SDRAM (upstream's grid is 128 KB, more
++		// than the 32X has free). Its tile and event planes are read in place from the bonus
++		// level's cart pack, where the PC build stored them decoded; collected items are
++		// marked in an 8 KB bit table instead of being cleared from the map. tileAt() and
++		// eventAt() replace every read of grid[y][x], clearEvent() every write of 0 to an event.
++		// On the PC build, without a mounted pack, the planes are decoded into the heap
++		// (tilesMapped / eventsMapped = false) and freed with the level.
++		const unsigned char* mapTiles;
++		const unsigned char* mapEvents;
++		bool tilesMapped, eventsMapped;
++		unsigned char clearedEvents[BLW * BLH / 8];
++	public:
++		unsigned char tileAt (int y, int x) const { unsigned char t = mapTiles[(y << 8) + x]; return t > 59 ? 59 : t; }
++		unsigned char eventAt (int y, int x) const {
++			const int i = (y << 8) + x;
++			return (clearedEvents[i >> 3] & (1 << (i & 7))) ? 0 : mapEvents[i];
++		}
++		void clearEvent (int y, int x) { const int i = (y << 8) + x; clearedEvents[i >> 3] |= (unsigned char)(1 << (i & 7)); }
++	private:
++#else
+ 		JJ1BonusLevelGridElement grid[BLH][BLW]; ///< Level grid
++#endif
+ 		char                     mask[60][64]; ///< Tile masks (at most 60 tiles, all with 8 * 8 masks)
+ 		fixed                    direction; ///< Player's direction
+ 
+diff --git a/oj/src/jj1/level/jj1level.cpp b/oj/src/jj1/level/jj1level.cpp
+index 2d890c2..5ef9da8 100644
+--- a/oj/src/jj1/level/jj1level.cpp
++++ b/oj/src/jj1/level/jj1level.cpp
+@@ -37,6 +37,9 @@
+ #include "jj1bullet.h"
+ #include "event/jj1event.h"
+ #include "jj1level.h"
++#ifdef OJ32X
++#include "oj32x.h"
++#endif
+ #include "jj1levelplayer.h"
+ #include "jj1/jj1episodeutils.h"
+ #include "jj1/save/jj1save.h"
+@@ -124,6 +127,18 @@ void JJ1Level::deletePanel () {
+  */
+ JJ1Level::~JJ1Level () {
+ 
++#ifdef OJ32X
++	// PORT32X: the level leaves its view clip rectangle set on the screen, and the menus'
++	// screen clear only fills inside it - a strip of level graphics stayed at the right edge
++	// of every menu. Reset the clip rectangle and clear both frame buffers on the way out.
++#ifdef OJ32X_SCROLL
++	oj32xScrollReset();   // the scrolling renderer's mapping off: back to the plain screen
++#endif
++	video.setClipRect(canvas, nullptr);
++	video.clearScreen(0);
++	oj32x_clear_screens();
++#endif
++
+ 	// Free events
+ 	if (events) delete events;
+ 
+@@ -365,7 +380,16 @@ unsigned char JJ1Level::getEventHits (unsigned char gridX, unsigned char gridY)
+  */
+ unsigned int JJ1Level::getEventTime (unsigned char gridX, unsigned char gridY) {
+ 
++#ifdef OJ32X
++	// PORT32X: event times live in a small table instead of the grid (see jj1level.h);
++	// a cell without an entry has time 0, as in upstream's cleared grid
++	const unsigned short cell = (gridY << 8) | gridX;
++	for (int i = 0; i < nEventTimes; i++)
++		if (eventTimes[i].cell == cell) return eventTimes[i].time;
++	return 0;
++#else
+ 	return grid[gridY][gridX].time;
++#endif
+ 
+ }
+ 
+@@ -439,7 +463,11 @@ int JJ1Level::hitEvent (unsigned char gridX, unsigned char gridY, int hits, JJ1L
+ 		}
+ 
+ 		ge->hits = (hits == 255)? 255: hitsToKill;
++#ifdef OJ32X
++		setEventTime(gridX, gridY, time);  // PORT32X: event time table
++#else
+ 		ge->time = time;
++#endif
+ 
+ 	} else {
+ 
+@@ -475,7 +503,29 @@ int JJ1Level::hitEvent (unsigned char gridX, unsigned char gridY, int hits, JJ1L
+  */
+ void JJ1Level::setEventTime (unsigned char gridX, unsigned char gridY, unsigned int time) {
+ 
++#ifdef OJ32X
++	// PORT32X: event time table (see jj1level.h); time 0 removes the cell's entry
++	const unsigned short cell = (gridY << 8) | gridX;
++	for (int i = 0; i < nEventTimes; i++) {
++		if (eventTimes[i].cell == cell) {
++			if (time) eventTimes[i].time = time;
++			else eventTimes[i] = eventTimes[--nEventTimes];
++			return;
++		}
++	}
++	if (!time) return;
++	if (nEventTimes == (int)(sizeof(eventTimes) / sizeof(eventTimes[0]))) {
++		// full: drop the oldest entry (never seen in testing; logged)
++		LOG_WARN("Event time table full");
++		for (int i = 1; i < nEventTimes; i++) eventTimes[i - 1] = eventTimes[i];
++		nEventTimes--;
++	}
++	eventTimes[nEventTimes].cell = cell;
++	eventTimes[nEventTimes].time = time;
++	nEventTimes++;
++#else
+ 	grid[gridY][gridX].time = time;
++#endif
+ 
+ }
+ 
+@@ -809,7 +859,17 @@ int JJ1Level::play () {
+ 
+ 		// Process frame-by-frame activity
+ 
++#ifdef OJ32X
++		// PORT32X: frame profiler marks (port/sdl_oj.cpp oj32x_prof: one timer read each;
++		// the figures are shown only in builds with OJ32X_PROFILE). Everything since the
++		// previous mark counts as "other"; the logic steps of this frame are counted.
++		oj32x_prof(6);
++		int profSteps = 0;
++#endif
+ 		while (getTimeChange() >= T_STEP) {
++#ifdef OJ32X
++			profSteps++;
++#endif
+ 
+ 			bool playerWasAlive = (localPlayer->getJJ1LevelPlayer()->getEnergy() != 0);
+ 
+@@ -828,6 +888,10 @@ int JJ1Level::play () {
+ 		}
+ 
+ 
++#ifdef OJ32X
++		oj32x_prof(0);   // logic (all steps of this frame)
++		oj32x_prof_steps(profSteps);
++#endif
+ 		// Draw the graphics
+ 
+ 		draw();
+diff --git a/oj/src/jj1/level/jj1level.h b/oj/src/jj1/level/jj1level.h
+index 94a0081..eb0350d 100644
+--- a/oj/src/jj1/level/jj1level.h
++++ b/oj/src/jj1/level/jj1level.h
+@@ -146,11 +146,21 @@
+ /// JJ1 level grid element
+ typedef struct {
+ 
++#ifdef OJ32X
++	// PORT32X: 3 bytes per cell instead of 8 (48 KB instead of 128 KB for the 256 x 64 grid,
++	// which must fit the 32X's 256 KB of SDRAM): event (0-127) and bg (0/1) share a byte, and
++	// the time moves to the small table JJ1Level::eventTimes.
++	unsigned char tile; ///< Indexes the tile set
++	unsigned char event : 7; ///< Indexes the event set
++	unsigned char bg : 1; ///< 0 = Effect background, 1 = Black background
++	unsigned char hits; ///< Number of times the event has been shot
++#else
+ 	unsigned char tile; ///< Indexes the tile set
+ 	unsigned char bg; ///< 0 = Effect background, 1 = Black background
+ 	unsigned char event; ///< Indexes the event set
+ 	unsigned char hits; ///< Number of times the event has been shot
+ 	int           time; ///< Point at which the event will do something, e.g. terminate
++#endif
+ 
+ } GridElement;
+ 
+@@ -219,6 +229,14 @@ class JJ1Level : public Level {
+ 		JJ1EventType  eventSet[EVENTS]; ///< Event types
+ 		char          mask[240][64]; ///< Tile masks. At most 240 tiles, all with 8 * 8 masks
+ 		GridElement   grid[LH][LW]; ///< Level grid. All levels are the same size
++#ifdef OJ32X
++		/// PORT32X: event times live here instead of in every grid element (they were 4 of its
++		/// 8 bytes: 64 KB). Only cells whose time is set take an entry; when the table is full
++		/// the oldest entry is dropped and a warning logged (never seen in testing).
++		struct EventTime { unsigned short cell; unsigned int time; };
++		EventTime     eventTimes[256];
++		int           nEventTimes;
++#endif
+ 		SDL_Color     skyPalette[MAX_PALETTE_COLORS]; ///< Full palette for sky background
+ 		bool          sky; ///< Whether or not to use sky background
+ 		unsigned char skyOrb; ///< The tile to use as the background sun/moon/etc.
+@@ -254,6 +272,21 @@ class JJ1Level : public Level {
+ 		int  load (char* fileName, bool checkpoint);
+ 		int  step ();
+ 		void draw ();
++#ifdef OJ32X
++	public:
++		/// PORT32X: draw one horizontal band of the tile layers (the target's clip rectangle).
++		/// Used for the foreground with the scrolling renderer, and by the original renderer,
++		/// which can split the screen between both SH2s (oj32x_parallel; off by default,
++		/// OJ32X_SLAVE_DRAWS in port/plat_mars.c - measured: no gain, shared bus).
++		void drawBand (SDL_Surface* target, int vX, int vY, int viewH, bool foreground);
++#ifdef OJ32X_SCROLL
++		/// PORT32X: the line-table scrolling renderer (description in jj1levelframe.cpp)
++		void scrollBg (int rx, int wy, int w, int h);
++		void scrollBegin (int vX, int vY, int viewH);
++		void scrollOrb (int vX, int vY);
++#endif
++	private:
++#endif
+ 		bool handleSave (int slot) override;
+ 
+ 	public:
+diff --git a/oj/src/jj1/level/jj1levelframe.cpp b/oj/src/jj1/level/jj1levelframe.cpp
+index a4a5b02..f5641a2 100644
+--- a/oj/src/jj1/level/jj1levelframe.cpp
++++ b/oj/src/jj1/level/jj1levelframe.cpp
+@@ -38,6 +38,12 @@
+ #include "io/gfx/font.h"
+ #include "io/gfx/video.h"
+ #include "util.h"
++#ifdef OJ32X
++#include "oj32x.h"
++extern "C" {
++#include "plat.h"
++}
++#endif
+ 
+ 
+ /**
+@@ -215,9 +221,350 @@ int JJ1Level::step () {
+ /**
+  * Draw the level.
+  */
++#ifdef OJ32X_SCROLL
++/*
++ * PORT32X: the line-table scrolling renderer (OJ32X_SCROLL).
++ *
++ * Upstream redraws the whole level picture every frame. The 32X has no scroll hardware, but
++ * every screen line's start address comes from a line table, so a picture kept in the frame
++ * buffer can be moved by rewriting 200 addresses.
++ *
++ * The ring. Each of the 32X's two frame buffers keeps the level's background (sky and
++ * background tiles) for the rows in view in a ring of OJ32X_RING_W x OJ32X_RING_H pixels
++ * (384 x 200): world row wy is ring row wy % 200, world column wx is ring column wx - wx0.
++ * The 64 extra columns are the room for sideways movement. plat_present_scroll
++ * (port/plat_mars.c) points the line table into the ring, using the 32X's 1-pixel shift
++ * register for odd x positions, and puts the status panel below it.
++ *
++ * What a frame draws. A frame buffer is drawn into every second frame, so its ring is two
++ * frames old. scrollBegin brings it up to date, drawing only:
++ *   - the rows that came into view;
++ *   - cells whose tile, event or background flag changed (destroyed blocks, collected items),
++ *     found by comparing the grid with a small shadow table per buffer;
++ *   - the background under what was drawn on top of the ring last time in this buffer
++ *     (sprites, foreground tiles, text, the sun). The screen mapping in port/sdl_oj.cpp
++ *     translates every blit or fill aimed at the screen into the ring and records its
++ *     rectangle for this.
++ * Everything is redrawn once when the view moves more than the 64 spare columns sideways,
++ * jumps so far vertically that none of the ring's rows stay in view, or more than 256
++ * rectangles were recorded.
++ *
++ * The sky. Its pixels are numbered by ring row, not by screen line; SkyPaletteEffect
++ * (paletteeffects.cpp) rotates the sky's palette entries to match, so the gradient still
++ * follows the screen.
++ */
++namespace {
++	// the shadow table: 13 x 8 cells, more than one ring holds at once (12 x 7 cells of 32 px)
++	const int RW = OJ32X_RING_W, RH = OJ32X_RING_H, SHADOW_W = 13, SHADOW_H = 8;
++	struct ShadowCell { short tx, ty; unsigned char tile, event, bg; };
++	struct RingState {
++		bool valid;
++		int wx0, rowLo, rowHi;
++		SDL_Rect dirty[256];
++		int nDirty;
++		bool overflow;
++		ShadowCell shadow[SHADOW_W * SHADOW_H];
++	};
++	RingState ringState[2];
++	RingState* cur;
++
++	// the cells upstream draws in its foreground pass (not part of the background ring)
++	bool fgTile (const GridElement* ge, const JJ1EventType* eventSet) {
++		return (ge->event == 123) || (ge->event == 124) || (ge->event == 125) ||
++			(eventSet[ge->event].movement == 37) || (eventSet[ge->event].movement == 38);
++	}
++}
++
++void oj32xScrollReset () {
++	plat_wait_flip();   // a swap still under way must finish before the screen is reused
++	oj32x_panel_reset();
++	ringState[0].valid = ringState[1].valid = false;
++	cur = nullptr;
++	oj32x_scroll_map(false, 0, 0, 0, 0);
++	oj32x_scroll_record(nullptr, 0, nullptr, nullptr);
++}
++
++/** Sky and background tiles for ring columns rx..rx+w-1 and world rows wy..wy+h-1. */
++void JJ1Level::scrollBg (int rx, int wy, int w, int h) {
++
++	SDL_Surface* ring = oj32x_ring_surface();
++	SDL_Rect src, dst, fill;
++	if (rx < 0) { w += rx; rx = 0; }
++	if (rx + w > RW) w = RW - rx;
++	if (w <= 0 || h <= 0) return;
++	src.w = TTOI(1); src.h = TTOI(1); src.x = 0;
++
++	int row = wy;
++	while (row < wy + h) {
++
++		const int r0 = row % RH;
++		int n = RH - r0;
++		if (n > wy + h - row) n = wy + h - row;
++		SDL_Rect clip = { (Sint16)rx, (Sint16)r0, (Uint16)w, (Uint16)n };
++		SDL_SetClipRect(ring, &clip);
++
++		// the sky (colours by ring row, two rows a colour) or the plain background
++		if (sky) {
++			for (int y = r0 & ~1; y < r0 + n; y += 2) {
++				fill.x = rx; fill.y = y; fill.w = w; fill.h = 2;
++				SDL_FillRect(ring, &fill, 156 + (y >> 1));
++			}
++		} else {
++			SDL_FillRect(ring, &clip, 127);
++		}
++
++		// the background tiles
++		const int tx0 = ITOT(cur->wx0 + rx), tx1 = ITOT(cur->wx0 + rx + w - 1);
++		const int ty0 = ITOT(row), ty1 = ITOT(row + n - 1);
++		for (int ty = ty0; ty <= ty1; ty++) {
++			for (int tx = tx0; tx <= tx1; tx++) {
++				dst.x = TTOI(tx) - cur->wx0;
++				dst.y = TTOI(ty) - row + r0;
++				if (tx >= LW || ty >= LH) {
++					fill.x = dst.x; fill.y = dst.y; fill.w = 32; fill.h = 32;
++					SDL_FillRect(ring, &fill, LEVEL_BLACK);
++					continue;
++				}
++				GridElement* ge = grid[ty] + tx;
++				if (ge->bg) {
++					fill.x = dst.x; fill.y = dst.y; fill.w = 32; fill.h = 32;
++					SDL_FillRect(ring, &fill, LEVEL_BLACK);
++				}
++				if (!fgTile(ge, eventSet)) {
++					src.y = TTOI(ge->tile);
++					SDL_BlitSurface(tileSet, &src, ring, &dst);
++				}
++				ShadowCell& sc = cur->shadow[(ty % SHADOW_H) * SHADOW_W + (tx - ITOT(cur->wx0)) % SHADOW_W];
++				sc.tx = tx; sc.ty = ty; sc.tile = ge->tile; sc.event = ge->event; sc.bg = ge->bg;
++			}
++		}
++
++		row += n;
++	}
++	SDL_SetClipRect(ring, nullptr);
++
++}
++
++/** Bring this frame buffer's ring up to date for the view at (vX, vY). */
++void JJ1Level::scrollBegin (int vX, int vY, int viewH) {
++
++	oj32x_scroll_map(false, 0, 0, 0, 0);       // the ring is drawn directly here
++	plat_wait_flip();                          // the swap asked for last frame must be done
++	                                           // (OJ32X_FLIP_ASYNC: the logic ran meanwhile)
++	{	// another screen was shown in between (save / load / set-up from the pause
++		// menu): it drew over the rings and the panel - everything again, in both buffers
++		static unsigned seenPlain;
++		const unsigned plain = oj32x_plain_presents();
++		if (plain != seenPlain) {
++			seenPlain = plain;
++			ringState[0].valid = ringState[1].valid = false;
++			oj32x_panel_reset();
++		}
++	}
++	cur = &ringState[plat_back_index() & 1];
++	RingState& S = *cur;
++
++	const bool full = !S.valid || S.overflow || vX < S.wx0 || vX + canvasW > S.wx0 + RW ||
++		vY + viewH <= S.rowLo || vY >= S.rowHi;
++
++	if (full) {
++		S.wx0 = vX - 32;
++		if (S.wx0 < 0) S.wx0 = 0;
++		S.wx0 &= ~31;
++		for (int i = 0; i < SHADOW_W * SHADOW_H; i++) S.shadow[i].tx = -1;
++		S.rowLo = vY; S.rowHi = vY + viewH;
++		scrollBg(0, vY, RW, viewH);
++		S.valid = true;
++	} else {
++		const int lo = vY, hi = vY + viewH;
++		// the background under last time's sprites, text and foreground tiles
++		for (int i = 0; i < S.nDirty; i++) {
++			const SDL_Rect& d = S.dirty[i];
++			int y0 = d.y, y1 = d.y + d.h;
++			if (y0 < lo) y0 = lo;
++			if (y0 < S.rowLo) y0 = S.rowLo;
++			if (y1 > hi) y1 = hi;
++			if (y1 > S.rowHi) y1 = S.rowHi;
++			if (y1 > y0) scrollBg(d.x, y0, d.w, y1 - y0);
++		}
++		// the rows that came into view
++		if (lo < S.rowLo) scrollBg(0, lo, RW, (S.rowLo < hi ? S.rowLo : hi) - lo);
++		if (hi > S.rowHi) { const int from = S.rowHi > lo ? S.rowHi : lo; scrollBg(0, from, RW, hi - from); }
++		S.rowLo = lo; S.rowHi = hi;
++		// cells whose tile, event or background flag changed since this buffer's last frame
++		// (destroyed blocks, collected items ...): compared with the shadow table
++		for (int ty = ITOT(lo); ty <= ITOT(hi - 1) && ty < LH; ty++) {
++			for (int tx = ITOT(vX); tx <= ITOT(vX + canvasW - 1) && tx < LW; tx++) {
++				const ShadowCell& sc = S.shadow[(ty % SHADOW_H) * SHADOW_W + (tx - ITOT(S.wx0)) % SHADOW_W];
++				const GridElement* ge = grid[ty] + tx;
++				if (sc.tx == tx && sc.ty == ty &&
++					(sc.tile != ge->tile || sc.event != ge->event || sc.bg != ge->bg)) {
++					int y0 = TTOI(ty), y1 = TTOI(ty + 1);
++					if (y0 < lo) y0 = lo;
++					if (y1 > hi) y1 = hi;
++					scrollBg(TTOI(tx) - S.wx0, y0, 32, y1 - y0);
++				}
++			}
++		}
++	}
++
++	// from here on the game draws on top of the ring: map the screen, record what it covers
++	S.nDirty = 0;
++	S.overflow = false;
++	oj32x_scroll_map(true, S.wx0, vX, vY, viewH);
++	oj32x_scroll_record(S.dirty, 256, &S.nDirty, &S.overflow);
++
++}
++
++/** The sun / moon: fixed on the screen, behind the tiles - drawn on the sky's pixels only. */
++void JJ1Level::scrollOrb (int vX, int vY) {
++
++	if (!sky || !skyOrb) return;
++	const int ox = ((canvasW * 4) / 5) - (vX & 3), oy = ((canvasH - 33) * 3) / 25;
++	const unsigned char* sp = static_cast<const unsigned char*>(tileSet->pixels) + TTOI(skyOrb + (vX & 3)) * tileSet->pitch;
++	const unsigned char key = video.getColorKey(tileSet);
++	for (int y = 0; y < 32; y++, sp += tileSet->pitch) {
++		unsigned char* row = oj32x_screen_row(oy + y);
++		if (!row) continue;
++		for (int x = 0; x < 32; x++) {
++			const int sx = ox + x;
++			if (sx < 0 || sx >= canvasW) continue;
++			if (sp[x] != key && row[sx] >= 156) oj32x_put_pixel(row + sx, sp[x]);
++		}
++	}
++	// the background there is restored next time like a sprite's
++	(void)vY;
++	if (cur && cur->nDirty < 256) {
++		SDL_Rect& d = cur->dirty[cur->nDirty++];
++		d.x = (Sint16)(ox + vX - cur->wx0); d.y = (Sint16)(oy + vY); d.w = 32; d.h = 32;
++	}
++
++}
++#endif
++
++#ifdef OJ32X
++// PORT32X: the original renderer's tile passes as a job for oj32x_parallel: each SH2 draws one
++// half of the view through its own clip rectangle (only one SH2 unless OJ32X_SLAVE_DRAWS).
++namespace {
++	struct OJ32XBand { JJ1Level* level; int vX, vY, viewH; bool foreground; };
++	void oj32xBandJob (void* arg, int part) {
++		OJ32XBand* j = static_cast<OJ32XBand*>(arg);
++		// part 0 = top half, part 1 = bottom half of the view
++		const int mid = j->viewH / 2;
++		const int y0 = part ? mid : 0, y1 = part ? j->viewH : mid;
++		SDL_Surface* target = oj32x_view(canvas, part, 0, y0, canvasW, y1 - y0);
++		j->level->drawBand(target, j->vX, j->vY, j->viewH, j->foreground);
++	}
++}
++
++/**
++ * PORT32X: the original's sky + background tile pass (foreground = false) or its
++ * foreground tile pass (true), drawn into one band (target's clip rectangle). Same pixels as
++ * the original code: only the target surface and the row range differ.
++ */
++void JJ1Level::drawBand (SDL_Surface* target, int vX, int vY, int viewH, bool foreground) {
++
++	SDL_Rect src, dst;
++	GridElement* ge;
++	const int bandTop = target->clip_rect.y, bandBottom = target->clip_rect.y + target->clip_rect.h;
++	auto fill = [&](int x, int y, int w, int h, int colour) {
++		SDL_Rect r = { (Sint16)x, (Sint16)y, (Uint16)w, (Uint16)h };
++		SDL_FillRect(target, &r, colour);
++	};
++
++	src.w = TTOI(1);
++	src.h = TTOI(1);
++	src.x = 0;
++
++	if (!foreground) {
++
++		if (sky) {
++
++			int bgScale;
++			if (canvasW > SW) bgScale = ((canvasH - 1) / 100) + 1;
++			else bgScale = ((canvasH - 34) / 100) + 1;
++
++			for (int y = 0; y < viewH; y += bgScale)
++				if (y + bgScale > bandTop && y < bandBottom)
++					fill(0, y, canvasW, bgScale, 156 + (y / bgScale));
++
++			if (skyOrb) {
++				dst.x = ((canvasW * 4) / 5) - (vX & 3);
++				dst.y = ((canvasH - 33) * 3) / 25;
++				src.y = TTOI(skyOrb + (vX & 3));
++				SDL_BlitSurface(tileSet, &src, target, &dst);
++			}
++
++		} else {
++
++			fill(0, 0, canvasW, canvasH, 127);
++
++		}
++
++	}
++
++	for (int y = 0; y <= ITOT(viewH - 1) + 1; y++) {
++
++		const int sy = TTOI(y) - (vY & 31);
++		if (sy + 32 <= bandTop || sy >= bandBottom) continue;
++
++		for (int x = 0; x <= ITOT(canvasW - 1) + 1; x++) {
++
++			const int sx = TTOI(x) - (vX & 31);
++
++			if ((x + ITOT(vX) >= 256) || (y + ITOT(vY) >= 64)) {
++				if (!foreground) fill(sx, sy, 32, 32, LEVEL_BLACK);
++				continue;
++			}
++
++			ge = grid[y + ITOT(vY)] + x + ITOT(vX);
++
++			if (!foreground) {
++
++				if (ge->bg) fill(sx, sy, 32, 32, LEVEL_BLACK);
++
++				if ((ge->event != 123) && (ge->event != 124) && (ge->event != 125) &&
++					(eventSet[ge->event].movement != 37) &&
++					(eventSet[ge->event].movement != 38)) {
++					dst.x = sx;
++					dst.y = sy;
++					src.y = TTOI(ge->tile);
++					SDL_BlitSurface(tileSet, &src, target, &dst);
++				}
++
++			} else {
++
++				if (ge->event == 123) {
++					dst.x = sx;
++					dst.y = sy;
++					if (ticks & 64) src.y = TTOI(eventSet[ge->event].multiB);
++					else src.y = TTOI(eventSet[ge->event].multiA);
++					SDL_BlitSurface(tileSet, &src, target, &dst);
++				}
++
++				if ((ge->event == 124) || (ge->event == 125) ||
++					(eventSet[ge->event].movement == 37) ||
++					(eventSet[ge->event].movement == 38)) {
++					dst.x = sx;
++					dst.y = sy;
++					src.y = TTOI(ge->tile);
++					SDL_BlitSurface(tileSet, &src, target, &dst);
++				}
++
++			}
++
++		}
++
++	}
++
++}
++#endif
++
+ void JJ1Level::draw () {
+ 
++#ifndef OJ32X
+ 	GridElement *ge;
++#endif
+ 	SDL_Rect src, dst;
+ 	int viewH = canvasH;
+ 	int vX, vY;
+@@ -264,6 +611,20 @@ void JJ1Level::draw () {
+ 	src.x = 0;
+ 
+ 
++#ifdef OJ32X
++#ifdef OJ32X_SCROLL
++	// PORT32X: bring this frame buffer's ring up to date (see above), then the sun
++	scrollBegin(vX, vY, viewH);
++	scrollOrb(vX, vY);
++#else
++	// PORT32X: the original renderer: sky and background tiles drawn as two bands
++	{
++		OJ32XBand job = { this, vX, vY, viewH, false };
++		oj32x_parallel(oj32xBandJob, &job);
++	}
++#endif
++	oj32x_prof(1);   // PORT32X: profiler mark - background
++#else
+ 	// If there is a sky, draw it
+ 	if (sky) {
+ 
+@@ -341,6 +702,8 @@ void JJ1Level::draw () {
+ 	}
+ 
+ 
++#endif
++
+ 	// Show active events
+ 	if (events) events->draw(ticks, change);
+ 
+@@ -354,6 +717,20 @@ void JJ1Level::draw () {
+ 
+ 
+ 
++#ifdef OJ32X
++	oj32x_prof(2);   // PORT32X: profiler mark - sprites (events, players, bullets)
++#ifdef OJ32X_SCROLL
++	// PORT32X: the foreground tiles straight onto the (mapped) screen
++	drawBand(canvas, vX, vY, viewH, true);
++#else
++	// PORT32X: the original renderer: foreground tiles drawn as two bands
++	{
++		OJ32XBand job = { this, vX, vY, viewH, true };
++		oj32x_parallel(oj32xBandJob, &job);
++	}
++#endif
++	oj32x_prof(3);   // PORT32X: profiler mark - foreground tiles
++#else
+ 	// Show foreground tiles
+ 
+ 	for (y = 0; y <= ITOT(viewH - 1) + 1; y++) {
+@@ -404,6 +781,8 @@ void JJ1Level::draw () {
+ 
+ 	}
+ 
++#endif
++
+ 	// FIXME: Temporary lines showing the water level
+ 	video.drawRect(0, FTOI(waterLevel - viewY), canvasW, 2, 24);
+ 	video.drawRect(0, FTOI(waterLevel - viewY) + 3, canvasW, 1, 24);
+@@ -595,4 +974,13 @@ void JJ1Level::draw () {
+ 
+ 	// Fill in remaining energy bar space with black
+ 	video.drawRect(offsetX + dst.x, canvasH - 13, dst.w, 7, LEVEL_BLACK);
++
++#ifdef OJ32X
++	oj32x_prof(4);   // PORT32X: profiler mark - panel and the rest of the drawing
++#ifdef OJ32X_PROFILE
++	// PORT32X: the profiler's box (ms per frame) in the top left corner, in its own small
++	// font and colours that no palette effect rotates, so it stays readable on every level
++	oj32x_prof_draw(canvas);
++#endif
++#endif
+ }
+diff --git a/oj/src/jj1/level/jj1levelload.cpp b/oj/src/jj1/level/jj1levelload.cpp
+index cfc4d66..3da3bd8 100644
+--- a/oj/src/jj1/level/jj1levelload.cpp
++++ b/oj/src/jj1/level/jj1levelload.cpp
+@@ -41,6 +41,9 @@
+ #include "loop.h"
+ #include "util.h"
+ #include "io/log.h"
++#ifdef OJ32X
++#include "oj32x.h"
++#endif
+ 
+ #include <string.h>
+ 
+@@ -66,11 +69,26 @@ int JJ1Level::loadPanel () {
+ 
+ 	}
+ 
++#ifdef OJ32X
++	// PORT32X: the panel's 46 KB come decoded from the cart pack. Decoding them needed a
++	// 46 KB block of SDRAM at every level start, and after a few levels the fragmented heap
++	// no longer had one (out of memory). Freed below only when decoded here.
++	bool panelMapped;
++	unsigned char* pixels = file->loadRLEPacked(46272, panelMapped);
++#else
+ 	unsigned char* pixels = file->loadRLE(46272);
++#endif
+ 
+ 
+ 	// Create the panel background
++#ifdef OJ32X
++	// PORT32X: the panel surface is drawn into (ammo display), so it is a copy in SDRAM;
++	// only the 32-line strip is copied, not the whole block
++	panel = video.createSurface(nullptr, SW, TTOI(1));
++	memcpy(panel->pixels, pixels, SW * TTOI(1));
++#else
+ 	panel = video.createSurface(pixels, SW, TTOI(1));
++#endif
+ 
+ 
+ 	// De-scramble the panel's ammo graphics
+@@ -85,7 +103,11 @@ int JJ1Level::loadPanel () {
+ 	}
+ 
+ 	delete[] sorted;
++#ifdef OJ32X
++	if (!panelMapped) delete[] pixels;
++#else
+ 	delete[] pixels;
++#endif
+ 
+ 	// Create the panel borders in FPS HUD mode
+ 	panelBG[0] = video.createSurface(nullptr, TTOI(1), TTOI(1));
+@@ -345,6 +367,23 @@ int JJ1Level::loadTiles (char* fileName) {
+ 	   FIXME: These are actually alternating, needs rewritten `SkyPaletteEffect` */
+ 	file->skipRLE();
+ 
++#ifdef OJ32X
++	// PORT32X: the tile set comes decoded from the cart pack and is used in place. Decoding
++	// it held every tile twice in SDRAM (up to 490 KB). The tiles run to the end of the file.
++	const int tilesStart = file->tell();
++	{
++		int pw, ph;
++		uint32_t end;
++		const uint8_t* pic = file->packPictureAny(&pw, &ph, &end);
++		if (pic && pw == TTOI(1) && (int)end == file->getSize()) {
++			file->seek(end, true);
++			tileSet = video.createSurface(pic, TTOI(1), ph);
++			video.enableColorKey(tileSet, TKEY);
++			return ph >> 5;
++		}
++	}
++#endif
++
+ 	// Load the tile pixel indices
+ 	int tiles = 0;
+ 	unsigned char* pixels[TSETS * TNUM] = {0};
+@@ -384,6 +423,10 @@ int JJ1Level::loadTiles (char* fileName) {
+ 		delete[] pixels[i];
+ 	}
+ 
++#ifdef OJ32X
++	// PORT32X: the PC build records the decoded tile set for the pack (T32X_BAKE)
++	file->bakePicture(tilesStart, buffer, TTOI(1), TTOI(tiles));
++#endif
+ 	tileSet = video.createSurface(buffer, TTOI(1), TTOI(tiles));
+ 	video.enableColorKey(tileSet, TKEY);
+ 	delete[] buffer;
+@@ -409,6 +452,13 @@ int JJ1Level::loadTiles (char* fileName) {
+ int JJ1Level::load (char* fileName, bool checkpoint) {
+ 	unsigned char* buffer;
+ 
++#ifdef OJ32X
++	// PORT32X: bring this level's world pack (both levels of the planet, its tiles, sprites
++	// and planet screen) into the cart. Nothing is loaded when the pack is already there,
++	// e.g. for a planet's second level; otherwise the 32X shows a loading screen.
++	oj32x_level_pack(fileName);
++#endif
++
+ 	// Load font
+ 	try {
+ 
+@@ -585,7 +635,15 @@ int JJ1Level::load (char* fileName, bool checkpoint) {
+ 
+ 	delete[] ext;
+ 
++#ifdef OJ32X
++	// PORT32X: memory measuring points - logged (the 32X's last log lines; on the PC build
++	// tools/heap_peak.sh groups the heap by them)
++	oj32x_mem_mark("level: before tiles");
++#endif
+ 	int tiles = loadTiles(string);
++#ifdef OJ32X
++	oj32x_mem_mark("level: tiles loaded");
++#endif
+ 
+ 	delete[] string;
+ 
+@@ -603,6 +661,9 @@ int JJ1Level::load (char* fileName, bool checkpoint) {
+ 
+ 	string = createFileName("SPRITES", worldNum);
+ 	res = loadSprites(string);
++#ifdef OJ32X
++	oj32x_mem_mark("level: sprites loaded");
++#endif
+ 
+ 	delete[] string;
+ 
+@@ -623,8 +684,28 @@ int JJ1Level::load (char* fileName, bool checkpoint) {
+ 
+ 	// Load tile and event references
+ 
++#ifdef OJ32X
++	// PORT32X: the decoded tile and event references in place from the cart pack (no 32 KB
++	// buffer in SDRAM); the grid is built from them as upstream does
++	const int gridStart = file->tell();
++	bool bakedGrid = false;
++	{
++		int gw, gh;
++		uint32_t gend;
++		const unsigned char* baked = file->packPictureAny(&gw, &gh, &gend);
++		if (baked && gw * gh == LW * LH * 2) {
++			file->seek(gend, true);
++			buffer = const_cast<unsigned char*>(baked);
++			bakedGrid = true;
++		}
++	}
++	if (!bakedGrid)
++#endif
+ 	buffer = file->loadRLE(LW * LH * 2);
+ 
++#ifdef OJ32X
++	nEventTimes = 0;  // PORT32X: empty event time table (see jj1level.h)
++#endif
+ 	// Create grid from data
+ 	for (int x = 0; x < LW; x++) {
+ 
+@@ -634,13 +715,22 @@ int JJ1Level::load (char* fileName, bool checkpoint) {
+ 			grid[y][x].bg = buffer[((y + (x * LH)) << 1) + 1] >> 7;
+ 			grid[y][x].event = buffer[((y + (x * LH)) << 1) + 1] & 127;
+ 			grid[y][x].hits = 0;
++#ifndef OJ32X
+ 			grid[y][x].time = 0;
++#endif
+ 
+ 		}
+ 
+ 	}
+ 
++#ifdef OJ32X
++	if (!bakedGrid) {
++		file->bakePicture(gridStart, buffer, LW * 2, LH);  // PORT32X: PC build records it
++		delete[] buffer;
++	}
++#else
+ 	delete[] buffer;
++#endif
+ 
+ 	// Ignore tile transparency settings, these are applied based on event type/behaviour
+ 
+@@ -1091,6 +1181,9 @@ int JJ1Level::load (char* fileName, bool checkpoint) {
+ 	ammoType = 0;
+ 	ammoOffset = -1;
+ 
++#ifdef OJ32X
++	oj32x_mem_mark("level: loaded");
++#endif
+ 	return E_NONE;
+ 
+ }
+diff --git a/oj/src/jj1/planet/jj1planet.cpp b/oj/src/jj1/planet/jj1planet.cpp
+index 92030f0..75ee1ed 100644
+--- a/oj/src/jj1/planet/jj1planet.cpp
++++ b/oj/src/jj1/planet/jj1planet.cpp
+@@ -24,6 +24,9 @@
+ 
+ 
+ #include "jj1planet.h"
++#ifdef OJ32X
++#include "oj32x.h"
++#endif
+ 
+ #include "io/controls.h"
+ #include "io/file.h"
+@@ -48,6 +51,12 @@ JJ1Planet::JJ1Planet (char * fileName, int previous) {
+ 	unsigned char *pixels;
+ 	int count;
+ 
++#ifdef OJ32X
++	// PORT32X: bring this planet's world pack (planet screen, both levels) into the cart,
++	// behind a loading screen; the levels that follow find it already there
++	oj32x_level_pack(fileName);
++#endif
++
+ 	try {
+ 
+ 		file = new File(fileName, PATH_TYPE_GAME);
+@@ -141,6 +150,14 @@ int JJ1Planet::play () {
+ 
+ 		video.clearScreen(0);
+ 
++#ifdef OJ32X_MARS
++		// PORT32X: a choice of this port - the planet is shown still, at its full size, for as
++		// long as the original sequence lasts, instead of growing in and flying towards the
++		// screen
++		if (globalTicks - tickOffset < F4 + FQ)
++			sprite.drawScaled(canvasW >> 1, canvasH >> 1, F2);
++		else return E_NONE;
++#else
+ 		if (globalTicks - tickOffset < F2)
+ 			sprite.drawScaled(canvasW >> 1, canvasH >> 1, globalTicks - tickOffset);
+ 		else if (globalTicks - tickOffset < F4)
+@@ -148,6 +165,7 @@ int JJ1Planet::play () {
+ 		else if (globalTicks - tickOffset < F4 + FQ)
+ 			sprite.drawScaled(canvasW >> 1, canvasH >> 1, (globalTicks - tickOffset - F4) * 32 + F2);
+ 		else return E_NONE;
++#endif
+ 
+ 		fontmn1->showString("now approaching", (canvasW >> 1), 2, alignX::Center);
+ 		fontmn1->showString(name, (canvasW >> 1), canvasH - 2, alignX::Center, alignY::Bottom);
+diff --git a/oj/src/jj1/save/jj1save.cpp b/oj/src/jj1/save/jj1save.cpp
+index 440977b..510ca95 100644
+--- a/oj/src/jj1/save/jj1save.cpp
++++ b/oj/src/jj1/save/jj1save.cpp
+@@ -19,6 +19,7 @@
+ #include "jj1save.h"
+ #include "util.h"
+ #include "io/log.h"
++#include <time.h> // PORT32X: time()/localtime(); newlib does not include it through other headers
+ 
+ /* This algorithm has been found out by CYBERDEViL by analysing the Assembly in
+  * DoxBox-X. For more information see: https://codeberg.org/CYBERDEV/JJSave/
+diff --git a/oj/src/jj1/scene/jj1scene.cpp b/oj/src/jj1/scene/jj1scene.cpp
+index 2fd1a3f..670f107 100644
+--- a/oj/src/jj1/scene/jj1scene.cpp
++++ b/oj/src/jj1/scene/jj1scene.cpp
+@@ -26,6 +26,9 @@
+ 
+ 
+ #include "jj1scene.h"
++#ifdef OJ32X
++#include "pack.h"
++#endif
+ 
+ #include "io/controls.h"
+ #include "io/gfx/font.h"
+@@ -58,6 +61,10 @@ JJ1SceneFrame::JJ1SceneFrame(int newFrameType, unsigned char* newFrameData, int
+  * Delete the JJ1 cutscene frame.
+  */
+ JJ1SceneFrame::~JJ1SceneFrame() {
++#ifdef OJ32X
++	// PORT32X: frame data used in place from a cart pack (File::mapBlock) is not ours to free
++	if (pack_contains(frameData)) return;
++#endif
+ 	delete[] frameData;
+ }
+ 
+diff --git a/oj/src/jj1/scene/jj1sceneload.cpp b/oj/src/jj1/scene/jj1sceneload.cpp
+index 306b9e9..692216a 100644
+--- a/oj/src/jj1/scene/jj1sceneload.cpp
++++ b/oj/src/jj1/scene/jj1sceneload.cpp
+@@ -169,6 +169,86 @@ void JJ1Scene::loadFullFrameMem (int size, unsigned char* frameData, unsigned ch
+  * @param frameData The compressed data
+  * @param pixels Buffer to contain the decompressed data
+  */
++#ifdef OJ32X
++/**
++ * PORT32X: the same decompression with one write per pixel.
++ *
++ * The original fills every coloured run down its whole column (to the bottom of the screen)
++ * and lets later rows overwrite it: up to 200 writes per pixel - seconds per cutscene frame
++ * on the SH2, which shows the half-done picture (every row the same: vertical stripes).
++ * Same result here: going through the screen in order, a pixel the data does not set takes
++ * the last colour written in its column above it (if any), otherwise keeps what it had.
++ */
++void JJ1Scene::loadCompactedMem (int size, unsigned char* frameData, unsigned char* pixels) {
++
++	const int total = SW * SH;
++	unsigned char colColor[SW];
++	bool colSet[SW];
++	for (int c = 0; c < SW; c++) colSet[c] = false;
++
++	int pos = 0;       // next position of the data stream
++	int done = 0;      // pixels finished (in order)
++	int doneCol = 0;   // done % SW
++
++	auto advance = [&](int to) {
++		if (to > total) to = total;
++		for (; done < to; done++) {
++			if (colSet[doneCol]) pixels[done] = colColor[doneCol];
++			if (++doneCol == SW) doneCol = 0;
++		}
++	};
++	auto put = [&](int p, unsigned char color) {
++		if (p >= total) return;
++		advance(p);
++		pixels[p] = color;
++		int c = p % SW;
++		colColor[c] = color;
++		colSet[c] = true;
++		done = p + 1;
++		doneCol = c + 1 == SW ? 0 : c + 1;
++	};
++
++	while (size > 0) {
++
++		unsigned char header = *frameData;
++		frameData++;
++		int fillWidth;
++
++		if (header == 0x7F) {
++			fillWidth = loadShortMem(&frameData);
++			unsigned char fillColor = *frameData;
++			frameData++;
++			for (int k = 0; k < fillWidth; k++) put(pos + k, fillColor);
++			size -= 3;
++		} else if (header == 0xFF) {
++			fillWidth = loadShortMem(&frameData);
++			size -= 2;
++		} else if (header & 0x80) {
++			fillWidth = (header - 0x80) + 1;
++		} else if (header & 0x40) {
++			unsigned char fillColor = *frameData;
++			frameData++;
++			fillWidth = (header - 0x40) + 1;
++			for (int k = 0; k < fillWidth; k++) put(pos + k, fillColor);
++			size--;
++		} else {
++			fillWidth = (header & 0x3F) + 1;
++			for (int col = 0; col < fillWidth; col++) {
++				unsigned char color = *frameData;
++				frameData++;
++				if (color != 0xFF) put(pos + col, color);
++				size--;
++			}
++		}
++
++		pos += fillWidth;
++		size--;
++	}
++
++	advance(total);
++
++}
++#else
+ void JJ1Scene::loadCompactedMem (int size, unsigned char* frameData, unsigned char* pixels) {
+ 
+ 	unsigned char* nextPixel = pixels;
+@@ -250,6 +330,7 @@ void JJ1Scene::loadCompactedMem (int size, unsigned char* frameData, unsigned ch
+ 
+ 	LOG_CM("PL CM pixels: %d", (unsigned int)(nextPixel - pixels));
+ }
++#endif
+ 
+ 
+ /**
+@@ -326,11 +407,25 @@ void JJ1Scene::loadAni (JJ1SceneAnimation &scene, File *f, int dataIndex) {
+ 					case E1LAniHeader:
+ 						{
+ 							LOG_ANIM("PL 1L Background Type: 0");
++#ifdef OJ32X
++							// PORT32X: the background comes decoded from the cart pack: skip the
++							// block instead of decoding it into 64 KB of SDRAM
++							const uint8_t* baked = f->packPicture(SW, SH, size);
++							if (baked) {
++								scene.background = video.createSurface(baked, SW, SH);
++								video.setPalette(scenePalette.palette);
++								break;
++							}
++							const int bgStart = f->tell();
++#endif
+ 							unsigned char* pixels = new unsigned char[SW* SH];
+ 							memset(pixels, 0, SW*SH);
+ 							unsigned char* frameData = f->loadBlock(size);
+ 							loadCompactedMem(size, frameData, pixels);
+ 							delete[] frameData;
++#ifdef OJ32X
++							f->bakePicture(bgStart, pixels, SW, SH);  // PORT32X: PC build records it
++#endif
+ 							scene.background = video.createSurface(pixels, SW, SH);
+ 							delete[] pixels;
+ 
+@@ -341,7 +436,11 @@ void JJ1Scene::loadAni (JJ1SceneAnimation &scene, File *f, int dataIndex) {
+ 
+ 					case EFullFrameAniHeader:
+ 						{
++							#ifdef OJ32X
++							unsigned char* blockData = f->mapBlock(size); // PORT32X: in place from the pack, no copy
++#else
+ 							unsigned char* blockData = f->loadBlock(size);
++#endif
+ 							scene.addFrame(EFullFrameAniHeader, blockData, size);
+ 						}
+ 						break;
+@@ -359,14 +458,22 @@ void JJ1Scene::loadAni (JJ1SceneAnimation &scene, File *f, int dataIndex) {
+ 
+ 					case ERCAniHeader:
+ 						{
++							#ifdef OJ32X
++							unsigned char* blockData = f->mapBlock(size); // PORT32X: in place from the pack, no copy
++#else
+ 							unsigned char* blockData = f->loadBlock(size);
++#endif
+ 							scene.addFrame(ERCAniHeader, blockData, size);
+ 						}
+ 						break;
+ 
+ 					case ECompactedAniHeader:
+ 						{
++							#ifdef OJ32X
++							unsigned char* blockData = f->mapBlock(size); // PORT32X: in place from the pack, no copy
++#else
+ 							unsigned char* blockData = f->loadBlock(size);
++#endif
+ 							scene.addFrame(ECompactedAniHeader, blockData, size);
+ 						}
+ 						break;
+diff --git a/oj/src/level/level.cpp b/oj/src/level/level.cpp
+index 1ab7284..25f4f07 100644
+--- a/oj/src/level/level.cpp
++++ b/oj/src/level/level.cpp
+@@ -28,6 +28,9 @@
+ 
+ 
+ #include "level.h"
++#ifdef OJ32X
++#include "oj32x.h"
++#endif
+ 
+ #include "game/game.h"
+ #include "io/controls.h"
+@@ -64,6 +67,11 @@ Level::Level (Game* owner) :
+ 	// Set the level stage
+ 	stage = LS_NORMAL;
+ 	sprites = tickOffset = steps = prevTicks = ticks = endTime = items = stats = 0;
++#ifdef OJ32X_MARS
++	// PORT32X: the frame counter (Z) starts as it was last left - kept in the RAM cart's
++	// save area, on until the player switches it off
++	if (oj32x_port_setting(0)) stats = S_SCREEN;
++#endif
+ 	multiplayer = false;
+ }
+ 
+@@ -119,6 +127,13 @@ int Level::playScene (const char* file) {
+ 	JJ1Scene* scene;
+ 	int ret;
+ 
++#ifdef OJ32X_MARS
++	// PORT32X: no cutscenes on the 32X. Their decoder is far too slow on the SH2 and the
++	// larger scenes do not fit the memory; the game goes straight on.
++	(void)file;
++	return E_NONE;
++#endif
++
+ 	delete paletteEffects;
+ 	paletteEffects = NULL;
+ 
+@@ -223,9 +238,15 @@ void Level::drawOverlay (unsigned char bg, bool menu, int option,
+ 		else
+ 			video.drawRect(canvasW - 84, 11, 80, 25, bg);
+ 
++#ifdef OJ32X_LONG_READS
++		// PORT32X: the top line shows the blits' read width instead of the screen size:
++		// 32 = 32-bit source reads on, 8 = byte reads (the Mode button switches them)
++		panelBigFont->showNumber(oj32x_long_reads() ? 32 : 8, canvasW - 12, 14);
++#else
+ 		panelBigFont->showNumber(video.getWidth(), canvasW - 52, 14);
+ 		panelBigFont->showString("x", canvasW - 48, 14);
+ 		panelBigFont->showNumber(video.getHeight(), canvasW - 12, 14);
++#endif
+ 		panelBigFont->showString("fps", canvasW - 76, 26);
+ 		panelBigFont->showNumber((int)smoothfps, canvasW - 12, 26);
+ 
+@@ -332,6 +353,13 @@ int Level::select (bool& menu, int option) {
+ 
+ 				// Restore level palette
+ 				video.setPalette(palette);
++#ifdef OJ32X_MARS
++				// PORT32X: clear the screen together with the palette change. Otherwise the
++				// next frame shows the menu's picture in the level's colours - unseen at
++				// 60 fps, a visible flash at the 32X's frame rate.
++				video.setClipRect(canvas, nullptr);
++				video.clearScreen(0);
++#endif
+ 
+ 			} else
+ 				playSound(SE::OW);
+@@ -353,6 +381,10 @@ int Level::select (bool& menu, int option) {
+ 
+ 				// Restore level palette
+ 				video.setPalette(palette);
++#ifdef OJ32X_MARS
++				video.setClipRect(canvas, nullptr);   // PORT32X: as above
++				video.clearScreen(0);
++#endif
+ 
+ 			} else
+ 				playSound(SE::OW);
+@@ -374,6 +406,10 @@ int Level::select (bool& menu, int option) {
+ 
+ 				// Restore level palette
+ 				video.setPalette(palette);
++#ifdef OJ32X_MARS
++				video.setClipRect(canvas, nullptr);   // PORT32X: as above
++				video.clearScreen(0);
++#endif
+ 
+ 			} else
+ 				playSound(SE::OW);
+@@ -394,6 +430,10 @@ int Level::select (bool& menu, int option) {
+ 
+ 			// Restore level palette
+ 			video.setPalette(palette);
++#ifdef OJ32X_MARS
++			video.setClipRect(canvas, nullptr);   // PORT32X: as above
++			video.clearScreen(0);
++#endif
+ 
+ 			break;
+ #endif
+@@ -428,6 +468,11 @@ int Level::loop (bool& menu, int& option, bool& message) {
+ 
+ 
+ 	// Main loop
++#ifdef OJ32X
++	// PORT32X: the pad uses its play layout (A/B/C as jump and fire) while playing, and its
++	// menu layout while the level's pause menu is open
++	oj32xPlayLayout = !menu;
++#endif
+ 	if (::loop(NORMAL_LOOP, paletteEffects, paused) == E_QUIT) return E_QUIT;
+ 
+ 
+@@ -444,6 +489,10 @@ int Level::loop (bool& menu, int& option, bool& message) {
+ 
+ 		if (!multiplayer) stats ^= S_SCREEN;
+ 		else stats = (stats + 1) & 3;
++#ifdef OJ32X_MARS
++		// PORT32X: remember the frame counter's state across power-off (RAM cart save area)
++		oj32x_port_setting_set(0, (stats & S_SCREEN) ? 1 : 0);
++#endif
+ 
+ 	}
+ 
+diff --git a/oj/src/main.cpp b/oj/src/main.cpp
+index 71b7fff..9628a47 100644
+--- a/oj/src/main.cpp
++++ b/oj/src/main.cpp
+@@ -30,6 +30,11 @@
+ #define EXTERN
+ 
+ #include "SDL_wrapper.h"
++#ifdef OJ32X
++#include "oj32x.h"
++// PORT32X: set by Level::loop for every frame played; the pad layout is chosen from it below
++bool oj32xPlayLayout = false;
++#endif
+ #if OJ_SDL3
+ #include <SDL3/SDL_main.h>
+ #endif
+@@ -294,7 +299,14 @@ void startUp (const char *argv0, int pathCount, char *paths[]) {
+ 
+ 	}
+ 
++#ifdef OJ32X
++	// PORT32X: the panel block in place from the common pack when it is there (the two panel
++	// fonts are made from it below); freed only when it was decoded here
++	bool panelMapped;
++	pixels = file->loadRLEPacked(46272, panelMapped);
++#else
+ 	pixels = file->loadRLE(46272);
++#endif
+ 
+ 	delete file;
+ 
+@@ -324,6 +336,9 @@ void startUp (const char *argv0, int pathCount, char *paths[]) {
+ 		if (fontiny) delete fontiny;
+ 		if (fontmn1) delete fontmn1;
+ 
++#ifdef OJ32X
++		if (!panelMapped)
++#endif
+ 		delete[] pixels;
+ 
+ 		closeAudio();
+@@ -340,6 +355,9 @@ void startUp (const char *argv0, int pathCount, char *paths[]) {
+ 	fontmn1->saveAtlasAsBMP("fontmn1.bmp");
+ 	#endif
+ 
++#ifdef OJ32X
++	if (!panelMapped)
++#endif
+ 	delete[] pixels;
+ 
+ 	// Establish arbitrary timing
+@@ -432,6 +450,11 @@ int play () {
+ 
+ 	// Load and play the startup cutscene
+ 
++#ifdef OJ32X
++	// PORT32X: the 32X skips the intro cutscene (no cutscenes, see Level::playScene); the PC
++	// build does too with T32X_SKIP_INTRO=1
++	if (!oj32x_skip_intro()) {
++#endif
+ 	try {
+ 
+ 		scene = new JJ1Scene("STARTUP.0SC");
+@@ -451,6 +474,9 @@ int play () {
+ 	}
+ 
+ 	delete scene;
++#ifdef OJ32X
++	}
++#endif
+ 
+ 
+ 	// Load and run the menu
+@@ -532,6 +558,12 @@ int loop (LoopType type, PaletteEffect* paletteEffects, bool effectsStopped) {
+ 
+ 
+ 	// Process system events
++#ifdef OJ32X
++	// PORT32X: the pad layout for this frame - the play layout when Level::loop asked for it
++	// (A/B/C as jump and fire), otherwise the menu layout (A/C/Start select, B back)
++	oj32x_pad_mode(oj32xPlayLayout ? OJ32X_PAD_PLAY : OJ32X_PAD_MENU);
++	oj32xPlayLayout = false;
++#endif
+ 	while (SDL_PollEvent(&event)) {
+ 
+ 		if (event.type == SDL_EVENT_QUIT) return E_QUIT;
+diff --git a/oj/src/menu/credits32x.cpp b/oj/src/menu/credits32x.cpp
+new file mode 100644
+index 0000000..0740bea
+--- /dev/null
++++ b/oj/src/menu/credits32x.cpp
+@@ -0,0 +1,223 @@
++/**
++ * @file credits32x.cpp
++ *
++ * PORT32X: the credits screen with a CD player, opened by the main menu's last entry in
++ * place of "Exit game" (a console has nothing to exit to). A plasma background, the credits
++ * in the game's own font (two pages), and below them the CD player for the soundtrack: the
++ * game's songs as CD audio tracks 2-41 (tools/music_tracks.txt), named after the planets
++ * that play them.
++ *
++ * Controls:
++ *   Left / Right       move the selector (nothing else changes; after 5 s without a choice
++ *                      it returns to the playing track)
++ *   A, C or Start      play the selected track (on the playing track: stop / play)
++ *   Y, X, Z, Mode,     hide / show the credits text (Up / Down for 3-button pads)
++ *   Up or Down
++ *   B                  back to the main menu
++ * Each track plays once, then the next track on the disc, after the last the first again.
++ */
++
++#ifdef OJ32X
++
++#include "credits32x.h"
++#include "plasma.h"
++
++#include "io/controls.h"
++#include "io/gfx/font.h"
++#include "io/gfx/video.h"
++#include "io/sound.h"
++#include "oj32x.h"
++#include "loop.h"
++
++#include <stdio.h>
++#include "music_lengths.h"
++#include <stdlib.h>
++
++namespace {
++
++	struct Song { const char* file; const char* name; };
++
++	// Disc tracks 2-41 in this order (tools/music_tracks.txt): the game's songs
++	// alphabetically, then Holiday Hare '95's own. The names say which planet's levels play
++	// each song (read from the game's level files).
++	const Song songs[] = {
++		{ "BONUS",    "BONUS STAGE" },
++		{ "BOSS",     "BOSS - GUARDIAN" },
++		{ "ENDLEVEL", "END OF LEVEL" },
++		{ "ENDSONG",  "ENDING" },
++		{ "MENUSNG",  "MAIN MENU" },
++		{ "SECRET",   "SECRET" },
++		{ "SONG0",    "DIAMONDUS" },
++		{ "SONG1",    "SLUGGION" },
++		{ "SONG10",   "CRYSILIS" },
++		{ "SONG11",   "ORBITUS" },
++		{ "SONG12",   "PEZROCK" },
++		{ "SONG13",   "DREEMPIPES" },
++		{ "SONG14",   "SCRAPARAP" },
++		{ "SONG15",   "BATTLESHIPS" },
++		{ "SONG16",   "MEGAIRBASE" },
++		{ "SONG17",   "MEDIVO" },
++		{ "SONG2",    "TECHNOIR" },
++		{ "SONG3",    "TUBELECTRIC" },
++		{ "SONG4",    "TURTEMPLE" },
++		{ "SONG5",    "NIPPIUS" },
++		{ "SONG6",    "JUNGROCK" },
++		{ "SONG7",    "LETNI" },
++		{ "SONG8",    "FANOLINT" },
++		{ "SONG9",    "MARBELARA" },
++		{ "SONGCD0",  "EXOTICUS" },
++		{ "SONGCD1",  "INDUSTRIUS" },
++		{ "SONGCD2",  "MUCKAMOK" },
++		{ "SONGCD3",  "RANEFORUS" },
++		{ "SONGCD4",  "STONAR" },
++		{ "SONGCD5",  "DECKSTAR" },
++		{ "SONGCD6",  "CERAMICUS" },
++		{ "SONGCD7",  "DESERTO" },
++		{ "SONGCD8",  "LAGUNICUS" },
++		{ "XM2",      "HOLIDAIUS" },
++		{ "XM3",      "HOLIDAIUS 2" },
++		{ "XMAS2",    "CANDION" },
++		{ "XMAS3",    "BLOXONIUS" },
++		{ "H95MENU",  "HOLIDAY HARE 95 MENU" },
++		{ "H95ENDLV", "HOLIDAY HARE 95 LEVEL END" },
++		{ "H95XM3",   "HOLIDAY HARE 95 STAGE 3" }
++	};
++	const int nSongs = sizeof(songs) / sizeof(songs[0]);
++	const int firstSong = 29;   // the player starts with track 31, SONGCD5 (Deckstar)
++
++	// Two pages, each shown for 8 seconds
++	const char* const page1[] = {
++		"JAZZ JACKRABBIT",
++		"EPIC MEGAGAMES 1994",
++		"",
++		"A GAME BY",
++		"ARJAN BRUSSEE",
++		"CLIFF BLESZINSKI",
++		"",
++		"OPENJAZZ",
++		"ALISTER THOMSON",
++		"AND CONTRIBUTORS"
++	};
++	const char* const page2[] = {
++		"D32XR 32X CODE",
++		"VICTOR LUCHITS",
++		"",
++		"SEGA CD AND 32X FRAMEWORK",
++		"CHILLY WILLY",
++		"",
++		"SEGA CD32X PORT",
++		"MICRONUT99",
++		"",
++		"THANK YOU FOR PLAYING!"
++	};
++
++}
++
++int runCredits32X () {
++
++	Plasma plasma;
++	// the font: the big font; on the PC T32X_CREDITS_FONT=0-4 picks another (for comparison)
++	Font* fonts[] = { fontmn2, fontbig, font2, fontmn1, fontiny };
++	const char* fe = getenv("T32X_CREDITS_FONT");
++	Font* font = fonts[fe ? atoi(fe) % 5 : 1];
++	int song = firstSong;      // the track that plays
++	int pick = firstSong;      // the track the selector points at (Left/Right)
++	unsigned int pickTime = 0; // when the selector last moved (0 = not moved)
++	bool playing = true;
++	bool showText = true, yWas = false;
++	char line[64];
++
++	// each track plays once, then the next one (the lengths come from the WAVs:
++	// port/music_lengths.h, tools/music_lengths.py); unknown length = the track repeats
++	auto play = [&](int s) {
++		const unsigned int ms = music_length_ms[s + 2];
++		oj32x_music_track(ms ? ((s + 2) | 0x8000) : (s + 2));
++		return globalTicks + (ms ? ms + 2000 : 0);
++	};
++	unsigned int ends = play(song);
++	unsigned int start = globalTicks;
++
++	while (true) {
++
++		if (loop(NORMAL_LOOP) == E_QUIT) return E_QUIT;
++
++		if (controls.release(C_ESCAPE)) break;
++
++		// Y shows / hides the credits text (the background and player stay)
++		{
++			// Y, X, Z or Mode (the 6-button pad's extra buttons: 0x0F00)
++			const bool y = (oj32x_pad() & 0x0F00) != 0;
++			if (y && !yWas) showText = !showText;
++			yWas = y;
++			// Up / Down do the same (a 3-button pad has no Y)
++			if (controls.release(C_UP) || controls.release(C_DOWN)) showText = !showText;
++		}
++
++		// Left/Right only move the selector; A/C/Start plays the choice. Without a choice
++		// nothing changes, and after 5 s the selector goes back to the playing track.
++		if (controls.release(C_LEFT)) {
++			pick = (pick + nSongs - 1) % nSongs;
++			pickTime = globalTicks;
++		}
++		if (controls.release(C_RIGHT)) {
++			pick = (pick + 1) % nSongs;
++			pickTime = globalTicks;
++		}
++		if (pickTime && globalTicks - pickTime >= 5000) {
++			pick = song;
++			pickTime = 0;
++		}
++		if (controls.release(C_ENTER)) {
++			if (pick != song || !playing) {
++				song = pick;
++				playing = true;
++				ends = play(song);
++			} else {
++				playing = false;           // A on the track that plays: stop
++				oj32x_music_track(0);
++			}
++			pickTime = 0;
++		}
++		// the end of a track: the next one
++		if (playing && music_length_ms[song + 2] && (int)(globalTicks - ends) >= 0) {
++			// on to the next track that is on the disc - a song whose WAV was missing at build
++			// time has no length and is skipped; after the last, the first again
++			for (int n = 0; n < nSongs; n++) {
++				song = (song + 1) % nSongs;
++				if (music_length_ms[song + 2]) break;
++			}
++			if (!pickTime) pick = song;
++			ends = play(song);
++		}
++
++		plasma.draw();
++
++		const bool second = ((globalTicks - start) / 8000) & 1;
++		const char* const* page = second ? page2 : page1;
++		const int lines = 10;
++		const int h = font->getHeight() + 4;
++		const int step = (canvasH - 3 * h - 8) / lines;   // the credits end above the player lines
++		int y = 4;
++		for (int i = 0; i < lines && showText; i++, y += step)
++			if (page[i][0]) font->showString(page[i], canvasW >> 1, y, alignX::Center);
++
++		snprintf(line, sizeof line, "%s %d  %s", playing ? "PLAYING" : "STOPPED", song + 2, songs[song].name);
++		font->showString(line, canvasW >> 1, canvasH - 2 * h - 4, alignX::Center);
++		if (pick != song) {
++			snprintf(line, sizeof line, "SELECT %d  %s", pick + 2, songs[pick].name);
++			font->showString(line, canvasW >> 1, canvasH - h - 2, alignX::Center);
++		} else {
++			font->showString("LEFT RIGHT SELECT  A PLAY", canvasW >> 1, canvasH - h - 2, alignX::Center);
++		}
++
++	}
++
++	// Back to the menu's own music
++	oj32x_music_track(0);
++	playMusic("MENUSNG.PSM", true);
++
++	return E_NONE;
++
++}
++
++#endif
+diff --git a/oj/src/menu/credits32x.h b/oj/src/menu/credits32x.h
+new file mode 100644
+index 0000000..9d480bf
+--- /dev/null
++++ b/oj/src/menu/credits32x.h
+@@ -0,0 +1,9 @@
++/**
++ * @file credits32x.h
++ * PORT32X: the credits screen with the CD player (description in credits32x.cpp)
++ */
++#ifndef _CREDITS32X_H
++#define _CREDITS32X_H
++#include "OpenJazz.h"
++int runCredits32X ();
++#endif
+diff --git a/oj/src/menu/filemenu.cpp b/oj/src/menu/filemenu.cpp
+index 62b044c..591e199 100644
+--- a/oj/src/menu/filemenu.cpp
++++ b/oj/src/menu/filemenu.cpp
+@@ -55,6 +55,13 @@ int FileMenu::run (bool forSaving, bool showCustom) {
+ 	};
+ 
+ 	video.setPalette(menuPalette);
++#ifdef OJ32X_MARS
++	// PORT32X: clear the screen together with the palette change. Otherwise the next frame
++	// shows the previous picture in the menu's colours - unseen at 60 fps, a white flash of
++	// about 0.1 s at the 32X's frame rate.
++	video.setClipRect(canvas, nullptr);
++	video.clearScreen(0);
++#endif
+ 
+ 	while (true) {
+ 
+diff --git a/oj/src/menu/gamemenu.cpp b/oj/src/menu/gamemenu.cpp
+index 671e1c3..86d2c2b 100644
+--- a/oj/src/menu/gamemenu.cpp
++++ b/oj/src/menu/gamemenu.cpp
+@@ -38,6 +38,9 @@
+ #include "util.h"
+ #include "io/log.h"
+ #include <memory>
++#ifdef OJ32X
++#include "oj32x.h"
++#endif
+ 
+ static bool getSaveData(int slot, int &lvl, int &plnt, difficultyType &dffclty) {
+ 	// load save game
+@@ -528,7 +531,17 @@ int GameMenu::selectEpisode (GameModeType mode, int episode) {
+ 
+ 	} else {
+ 
++#ifdef OJ32X_MARS
++		// PORT32X: on the 32X the last entry is Holiday Hare '95 instead of "specific level".
++		// oj32x_set_game(1) switches to its own world packs (OJ600/OJ610), sound effects,
++		// music and save slots for the run; it starts at world 50, level 0, as the episode does.
++		oj32x_set_game(1);
++		const int ret = newGameDifficulty(mode, 0, 50);
++		oj32x_set_game(0);
++		if (ret == E_QUIT) return E_QUIT;
++#else
+ 		if (newGameLevel(mode) == E_QUIT) return E_QUIT;
++#endif
+ 
+ 	}
+ 
+@@ -573,7 +586,12 @@ int GameMenu::newGameEpisode (GameModeType mode) {
+ 
+ 	} else exists[10] = false;
+ 
++#ifdef OJ32X_MARS
++	// PORT32X: the Holiday Hare '95 entry is available when its packs are on the disc
++	exists[MAX_EPISODES] = oj32x_hh95_available();
++#else
+ 	exists[MAX_EPISODES] = true; // always possible to load custom level
++#endif
+ 
+ 	episode = 0;
+ 
+@@ -634,6 +652,12 @@ int GameMenu::newGameEpisode (GameModeType mode) {
+ 		dst.x = (canvasW >> 1) + 16; // image is 144 pixels wide
+ 		dst.y = (canvasH - 110) >> 1;
+ 
++#ifdef OJ32X_MARS
++		if (episode == 11 && episodes > 9) {
++			// PORT32X: Holiday Hare '95 shows the Holiday Hare episode's picture
++			SDL_BlitSurface(episodeScreens[9], NULL, canvas, &dst);
++		} else
++#endif
+ 		if ((episode < episodes - 1) || (episode < 6)) {
+ 
+ 			SDL_BlitSurface(episodeScreens[episode], NULL, canvas, &dst);
+@@ -669,7 +693,12 @@ int GameMenu::newGameEpisode (GameModeType mode) {
+ 
+ 			case 11:
+ 				tag = " ";
++#ifdef OJ32X_MARS
++				// PORT32X: Holiday Hare '95 (see newGameEpisode)
++				title = "holiday hare 95";
++#else
+ 				title = "specific level";
++#endif
+ 				break;
+ 
+ 			default:
+diff --git a/oj/src/menu/mainmenu.cpp b/oj/src/menu/mainmenu.cpp
+index b898e56..a61723d 100644
+--- a/oj/src/menu/mainmenu.cpp
++++ b/oj/src/menu/mainmenu.cpp
+@@ -25,6 +25,9 @@
+ 
+ #include "menu.h"
+ #include "plasma.h"
++#ifdef OJ32X
++#include "credits32x.h"
++#endif
+ 
+ #include "game/game.h"
+ #include "io/controls.h"
+@@ -232,7 +235,14 @@ int MainMenu::select (int option) {
+ 
+ 		case 5: // Exit
+ 
++#ifdef OJ32X
++			// PORT32X: a console has nothing to exit to - this entry opens the credits and
++			// the CD player (credits32x.cpp)
++			if (runCredits32X() == E_QUIT) return E_QUIT;
++			break;
++#else
+ 			return E_RETURN;
++#endif
+ 
+ 	}
+ 
+@@ -279,7 +289,13 @@ int MainMenu::run () {
+ 	for (macro = 0; macro < 4; macro++) {
+ 		macroType[macro] = -1;
+ 
++#if defined(OJ32X_MARS) && !defined(OJ32X_DEMO)
++		// PORT32X: no demos on the 32X (the recordings are not loaded, so the menu never
++		// starts one); a build with -DOJ32X_DEMO has them
++		if (false) {
++#else
+ 		if (File::exists(fileName, PATH_TYPE_GAME)) {
++#endif
+ 			FilePtr file = std::make_unique<File>(fileName, PATH_TYPE_GAME);
+ 			macroType[macro] = file->loadChar();
+ 		}
+@@ -417,10 +433,16 @@ int MainMenu::run () {
+ 		SDL_Delay(T_MENU_FRAME);
+ 
+ 
++#ifdef OJ32X_MARS
++		// PORT32X: no plasma behind the main menu on the 32X: it made the menu slow. The plain
++		// background colour instead (the credits screen keeps a faster plasma, plasma.cpp).
++		video.clearScreen(28);
++#else
+ 		//as long as we're drawing plasma, we don't need to clear the screen.
+ 		//video.clearScreen(28);
+ 
+ 		plasma.draw();
++#endif
+ 
+ 		// draw logo and version string
+ 
+diff --git a/oj/src/menu/menu.h b/oj/src/menu/menu.h
+index cea5afb..a1d9682 100644
+--- a/oj/src/menu/menu.h
++++ b/oj/src/menu/menu.h
+@@ -31,7 +31,11 @@
+ 
+ // Constants
+ 
++#ifdef OJ32X_MARS
++#define ESCAPE_STRING "(b) back"  // PORT32X: the pad's B button goes back
++#else
+ #define ESCAPE_STRING "(esc) quits"
++#endif
+ 
+ #define MAX_EPISODES 11
+ 
+diff --git a/oj/src/menu/plasma.cpp b/oj/src/menu/plasma.cpp
+index 7b90515..e98cba5 100644
+--- a/oj/src/menu/plasma.cpp
++++ b/oj/src/menu/plasma.cpp
+@@ -21,6 +21,11 @@
+ 
+ 
+ #include "plasma.h"
++#ifdef OJ32X
++#include "oj32x.h"
++#include <string.h>
++#include <stdint.h>
++#endif
+ 
+ #include "SDL_wrapper.h"
+ #include "level/level.h"
+@@ -47,6 +52,71 @@ Plasma::Plasma(){
+  *
+  * @return Error code
+  */
++#ifdef OJ32X
++/*
++ * PORT32X: the same picture, much faster. The colour of a pixel is
++ *   ((row term + column term) >> 10) & 15
++ * where the column term depends only on x - so it is worked out once per frame for the 320
++ * columns, and each pixel is one add and one shift; four pixels go out in one 32-bit write.
++ * The screen is drawn in two halves through oj32x_parallel: both on the master SH2 by default,
++ * one on each SH2 in builds with OJ32X_SLAVE_DRAWS.
++ */
++namespace {
++	struct PlasmaJob { unsigned char* px; int w, h, pitch, p0, p1; const unsigned int* col; };
++	void plasmaRows (void* arg, int part) {
++		PlasmaJob* j = static_cast<PlasmaJob*>(arg);
++		const int y0 = part ? j->h / 2 : 0, y1 = part ? j->h : j->h / 2;
++		int t1 = j->p0 + 2 * y0, t2 = j->p1 + y0;
++		for (int y = y0; y < y1; y++, t1 += 2, t2 += 1) {
++			const unsigned int colb = (fCos(t1 * 4) << 3) + (fCos(t2 * 4) << 3) + (32 << 10);
++			unsigned char* row = j->px + y * j->pitch;
++			int x = 0;
++			if (((uintptr_t)row & 3) == 0) {
++				for (; x + 4 <= j->w; x += 4) {
++					unsigned char c[4];
++					for (int k = 0; k < 4; k++) c[k] = ((colb + j->col[x + k]) >> 10) & 0xF;
++					uint32_t v;
++					memcpy(&v, c, 4);
++					*reinterpret_cast<uint32_t*>(row + x) = v;
++				}
++			}
++			for (; x < j->w; x++) row[x] = ((colb + j->col[x]) >> 10) & 0xF;
++		}
++	}
++}
++
++int Plasma::draw(){
++
++	static unsigned int col[1024];
++
++	SDL_LockSurface(canvas);
++
++	PlasmaJob job;
++	job.px = static_cast<unsigned char*>(canvas->pixels);
++	job.w = canvas->w < 1024 ? canvas->w : 1024;
++	job.h = canvas->h;
++	job.pitch = canvas->pitch;
++	job.p0 = p0;
++	job.p1 = p1;
++	job.col = col;
++
++	int t3 = p2, t4 = p3;
++	for (int x = 0; x < job.w; x++, t3 += 3, t4 += 2)
++		col[x] = (fCos(t3 * 4) << 3) + (fCos(t4 * 4) << 3);
++
++	oj32x_parallel(plasmaRows, &job);
++
++	p0 = p0 < 256 ? p0+1 : 1;
++	p1 = p1 < 256 ? p1+2 : 2;
++	p2 = p2 < 256 ? p2+3 : 3;
++	p3 = p3 < 256 ? p3+4 : 4;
++
++	SDL_UnlockSurface(canvas);
++
++	return E_NONE;
++
++}
++#else
+ int Plasma::draw(){
+ 	int x,y;
+ 
+@@ -95,3 +165,4 @@ int Plasma::draw(){
+ 	return E_NONE;
+ 
+ }
++#endif
+diff --git a/oj/src/menu/setupmenu.cpp b/oj/src/menu/setupmenu.cpp
+index 6989d64..144ad53 100644
+--- a/oj/src/menu/setupmenu.cpp
++++ b/oj/src/menu/setupmenu.cpp
+@@ -26,6 +26,9 @@
+ 
+ 
+ #include "menu.h"
++#ifdef OJ32X_MARS
++#include "oj32x.h"
++#endif
+ 
+ #include "io/controls.h"
+ #include "io/gfx/font.h"
+@@ -567,6 +570,22 @@ int SetupMenu::setupVideo () {
+  */
+ int SetupMenu::setupAudio () {
+ 
++#ifdef OJ32X_MARS
++	// PORT32X: CD audio and the PCM chip have no volume control on this path, so the audio
++	// page has two on/off switches instead of the volume bars (off = volume 0)
++	int choice = 0;
++	while (true) {
++		const char* opts[2] = {
++			getMusicVolume() > 0 ? "music: on" : "music: off",
++			getSoundVolume() > 0 ? "sound effects: on" : "sound effects: off" };
++		int ret = generic("AUDIO", opts, 2, choice);
++		if (ret == E_QUIT) return E_QUIT;
++		if (ret < 0) return E_NONE;
++		if (choice == 0) setMusicVolume(getMusicVolume() > 0 ? 0 : MAX_VOLUME);
++		else setSoundVolume(getSoundVolume() > 0 ? 0 : MAX_VOLUME);
++	}
++#endif
++
+ 	int x, y;
+ 	bool soundActive;
+ 
+@@ -672,15 +691,42 @@ int SetupMenu::run () {
+ 	setupMods[3] = (setup.hudStyle == hudType::FPS? setupModsOn[3]: setupModsOff[3]);
+ 
+ 	video.setPalette(menuPalette);
++#ifdef OJ32X_MARS
++	// PORT32X: clear the screen together with the palette change. Otherwise the next frame
++	// shows the previous picture in the menu's colours - unseen at 60 fps, a white flash of
++	// about 0.1 s at the 32X's frame rate.
++	video.setClipRect(canvas, nullptr);
++	video.clearScreen(0);
++#endif
+ 
+ 	while (true) {
+ 
++#ifdef OJ32X_MARS
++		// PORT32X: a console with a pad - no keyboard or joystick set-up and no video modes.
++		// Four entries: character, the A/B swap (which of A and B jumps and which fires;
++		// C always jumps), audio and gameplay. map32x gives each entry's upstream option
++		// (-1: the A/B swap, handled here).
++		const char* setup32x[4] = { "character", oj32x_ab_swapped() ? "buttons: a fire b jump" : "buttons: a jump b fire", "audio", "gameplay" };
++		static const int map32x[4] = { 0, -1, 4, 5 };
++		int option32x = option < 4 ? option : 0;
++		ret = generic("SETUP OPTIONS", setup32x, 4, option32x);
++		option = option32x;
++		// PORT32X: the settings file (music, effects, HUD style, character, game options)
++		// was only written when the program quits - which a console never does. Now on leaving
++		// the set-up menu, into the RAM cart's save area: global, for every saved game.
++		if (ret == E_RETURN) { setup.save(); return E_NONE; }
++		if (ret < 0) setup.save();
++		if (ret < 0) return ret;
++		if (map32x[option32x] < 0) { oj32x_ab_swap(!oj32x_ab_swapped()); continue; }
++		switch (map32x[option32x]) {
++#else
+ 		ret = generic("SETUP OPTIONS", setupOptions, 6, option);
+ 
+ 		if (ret == E_RETURN) return E_NONE;
+ 		if (ret < 0) return ret;
+ 
+ 		switch (option) {
++#endif
+ 
+ 			case 0:
+ 

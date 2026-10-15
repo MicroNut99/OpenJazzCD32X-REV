@@ -1,0 +1,60 @@
+OpenJazz
+openjazz.cfg
+openjazz.log
+openjazz-log.html
+*.exe
+*.a
+*.o
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+*.cmake
+!/builds/cmake/*.cmake
+Makefile
+build.ninja
+CMakeUserPresets.json
+# CMake builds
+build-debug/
+build-*-debug/
+build-release/
+build-*-release/
+build-*/
+
+# homebrew
+*.elf
+
+# wii
+*.dol
+
+# psp
+*.prx
+PARAM.SFO
+EBOOT.PBP
+
+# 3ds
+*.3dsx
+*.smdh
+*.cia
+
+# RISC OS
+/res/riscos/\!OpenJazz/data/*
+*,ff8
+*,e1f
+
+# macos
+.DS_Store
+
+# Android
+builds/android/.gradle/
+builds/android/app/.cxx/
+*.aar
+*.app
+
+# distribution archives
+openjazz-*.tar.*
+OpenJazz-*.zip
+
+# generated documentation
+/doc/html
+/res/unix/OpenJazz.6
