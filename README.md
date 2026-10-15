@@ -27,6 +27,63 @@ program replaces the one in the RAM cart.
 Build: `NAME=R1 bash tools/make_disc.sh` in this folder (WSL) - the disc goes to
 `discs/R1/OpenJazzCD32X_R1.cue` inside the folder.
 
+## Why the "Sonic CD Rip and Tear" method works here
+
+The method: tear the game's level graphics apart at build time into the Genesis's own format
+(8 x 8 patterns, 16-colour palettes, a map of which pattern goes where), let the **Genesis VDP
+draw the level** on its planes, and keep the **32X for what moves**: the sprites, the
+foreground and the panel. It is how Sonic CD's levels are built (16 x 16 blocks made of 8 x 8
+patterns), applied to a game that was never made for the Genesis.
+
+### The advantage
+
+- **The Genesis draws its planes for free.** Its VDP builds every line from the patterns as the
+  picture goes out; scrolling is two register writes. The 32X has no tile hardware at all - in
+  the older builds the SH2s spent most of each frame copying tile pixels into the frame buffer
+  (new rows and columns as the view moved, and the background again under every sprite).
+- **The 32X's work shrinks to the sprites.** The level tiles are most of the screen; the 32X
+  now draws only what lies in front of them. In levels the frame rate went from about 10-13 to about 20-22 a
+  second (R1 on the console).
+- **The 68000 has little to do.** Per screen refresh it writes the scroll position, the
+  colours (cycles, fades) and at most a column and a row of new patterns as the camera moves.
+  It never decodes anything: the conversion was done on the PC.
+- **The Genesis picture is steady.** It scrolls at 60 refreshes a second with the camera, even
+  when the 32X's own picture is at 20.
+
+### Why the tile size decides it: tiles that divide by 16 (and so by 8)
+
+The VDP only knows 8 x 8 patterns placed on an 8-pixel grid. A game tile can become patterns
+only if its edges fall on that grid:
+
+- **Jazz's tiles are 32 x 32** (32 = 2 x 16). Every tile is exactly 4 x 4 patterns, always in the
+  same place on the grid. One tile is converted once, into 16 patterns and 16 map words, and is
+  reused everywhere it appears. With identical and mirrored patterns stored once, the tiles a
+  level uses fit the 1,600 patterns the video memory has room for in 75 of the 78 levels (the
+  other 3 merge a few look-alike patterns). A destroyed block is one tile swapped for another: 16 map words.
+- **Tiles that do not divide by 8 do not line up.** Hurrican's tiles are 20 x 20. A 20-pixel
+  tile starts at 0, 20, 40, 60 ... so every other tile edge falls in the middle of an 8 x 8
+  pattern (20 = 2 x 8 + 4). Those patterns hold parts of 2 or 4 different tiles, and the same
+  tile is cut differently depending on where it sits (the grids only meet again every 40
+  pixels). The patterns are no longer "this tile" but "these neighbours at this
+  offset" - every different combination on the map is a new pattern. A level's map turns into
+  thousands of unique patterns, far more than the 1,600 that fit, and nothing a converter can do
+  removes them without visibly damaging the picture. Changing one tile in play means rebuilding
+  the patterns it shares with its neighbours.
+
+So a game with tiles of 16 or 32 (or any multiple of 8) gets the whole gain: the conversion is
+exact and small. A game with other sizes gets little: most of the level would not fit the
+Genesis, and what did fit would still leave the 32X drawing much of the picture.
+
+### What else has to fit
+
+- **Colours.** The Genesis shows 4 palettes of 15 colours (61 on screen, from 512); each 8 x 8
+  pattern uses one palette. Jazz's levels were drawn with 256, so the converter picks the 4
+  palettes that keep them closest. Games with few colours per area convert well; games with
+  smooth gradients or many colours in one spot lose more.
+- **Effects.** Anything the original does to its background pixels every frame (Jazz's palette
+  parallax, colour cycles, water darkening) needs a Genesis form: plane B, the 68000 rotating
+  colours, the palette fade (R3). Effects the VDP has no form for stay with the 32X.
+
 ## What you need
 
 - A Sega Genesis / Mega Drive with **Sega CD** and **32X**
