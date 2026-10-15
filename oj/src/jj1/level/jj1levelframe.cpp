@@ -38,6 +38,8 @@
 #include "io/gfx/font.h"
 #include "io/gfx/video.h"
 #include "util.h"
+#include <cstdlib>
+#include <cstdio>
 #ifdef OJ32X
 #include "oj32x.h"
 extern "C" {
@@ -669,6 +671,12 @@ void JJ1Level::draw () {
 		scrollOrb(vX, vY);
 	}
 	genbg_frame(vX, vY);   // REV: the Genesis plane follows this picture (port/genbg.h)
+#ifndef __sh__
+	if (getenv("T32X_TRACK")) {   // REV test: where Jazz is on the screen in each picture
+		JJ1LevelPlayer* lp = localPlayer->getJJ1LevelPlayer();
+		fprintf(stderr, "[track] %d %d %d %d\n", FTOI(lp->getX()) - vX, FTOI(lp->getY()) - vY, vX, vY);
+	}
+#endif
 #else
 	// PORT32X: the original renderer: sky and background tiles drawn as two bands
 	{

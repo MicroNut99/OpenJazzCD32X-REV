@@ -74,6 +74,17 @@ writes.
 | 0xF000 | h-scroll table |
 | 0xF400-0xFFFF | patterns 1504-1599 |
 
+### The camera (R2)
+
+With the Genesis plane on, a frame runs as OpenJazz does: the logic steps first, then the camera
+from the state after them, then the picture. The J23 order (the camera from the state before
+the steps, the steps on the slave SH2 beside the master's ring drawing) put Jazz in a different
+place on the screen in each picture - his movement during that frame's steps - so he jittered
+against the level (measured on the PC at the console's 20 frames a second: on-screen movement
+from picture to picture 5.0 px vertically on average, up to 42; now 0.9, up to 10, which is
+the camera catching up). The ring is only the sky now, so the slave had nothing to overlap.
+Levels the 32X still draws keep the J23 order (the speed it gives them matters more there).
+
 ## Command numbers (CD32X command ledger additions)
 
 | Where | Number | Meaning |
@@ -90,6 +101,10 @@ writes.
   camera, a jump and a changed block; every dump drawn as the VDP draws planes A and B and
   compared pixel by pixel with the level file (`tools/genesis_check_vdp.py`), and the longest
   vblank pass measured.
+- `make -C host SCROLL=1` builds the PC version with the console's renderer
+  (`host/openjazz32x_host_scroll`); `T32X_SLAVE_LOGIC=1` runs its J23 order of logic and
+  drawing, `T32X_FRAME_VBLANKS=3` makes each frame last 3 vblanks (the console's 20 fps),
+  `T32X_TRACK=1` prints Jazz's place on the screen in each picture.
 - The PC build keeps a model of the 68000's plane (port/plat_host.c) and saves its frames as
   the console mixes the two pictures; `tools/genesis_preview.py` shows a level's plane beside
   the original.

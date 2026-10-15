@@ -166,7 +166,9 @@ static void advance_frame_time(void)
 {
 	if (real_time > 0)
 		return;  /* the system clock runs by itself */
-	now_frac += 50;  /* 16 2/3 ms per frame, in thirds */
+	static long frame_thirds = -1;   /* REV: T32X_FRAME_VBLANKS=n - frames as long as n vblanks (the console's 20 fps: 3) */
+	if (frame_thirds < 0) { const char *e = getenv("T32X_FRAME_VBLANKS"); frame_thirds = 50L * (e && *e ? atol(e) : 1); }
+	now_frac += frame_thirds;  /* 16 2/3 ms per vblank, in thirds */
 	now_ms += now_frac / 3;
 	now_frac %= 3;
 }
@@ -1060,7 +1062,7 @@ uint32_t plat_prof_us(void)
 uint32_t plat_frame_ms(void) { return plat_ticks_ms(); }
 void plat_logic_parallel(void (*fn)(void *, int), void *arg) { fn(arg, 0); fn(arg, 1); }
 void plat_slave_logic(int on) { (void)on; }
-int plat_slave_logic_on(void) { return 0; }
+int plat_slave_logic_on(void) { const char *e = getenv("T32X_SLAVE_LOGIC"); return e && *e == '1'; }   /* the 32X's order of logic and drawing (J23) */
 void plat_slave_draws(int on) { (void)on; }
 int plat_slave_draws_on(void) { return 0; }
 

@@ -28,13 +28,16 @@ XMP_SRCS := $(notdir $(wildcard $(EXT)/xmp/src/*.c)) $(addprefix loaders/,$(notd
 PORT_CXX := sdl_oj.cpp host_new.cpp
 PORT_C   := plat_host.c mixer.c cart.c pack.c pack_bake.c genbg.c
 
-OBJDIR := obj$(if $(ASAN),_asan)
+OBJDIR := obj$(if $(ASAN),_asan)$(if $(SCROLL),_scroll)
 OPT    := $(if $(ASAN),-O1 -g -fsanitize=address -fno-omit-frame-pointer,-O2 -g)
 OPT    += -fno-pie
 DEFS   := -DOJ32X -DOJ_SDL1 -DPORTABLE -DNDEBUG \
           -DOJ_VERSION=\"git-oj32x\" -DOJ_DATE=\"2026-10-05\" \
           -DOJ_URL=\"http://alister.eu/jazz/oj/\" -DOJ_BUGREPORT=\"https://github.com/AlisterT/openjazz/issues\" \
           -DLIBXMP_CORE_PLAYER -DLIBXMP_STATIC -DXMP_SYM_VISIBILITY
+# REV: SCROLL=1 - the 32X's line-table renderer as on the console (and the Genesis plane with
+# it): host/openjazz32x_host_scroll
+DEFS   += $(if $(SCROLL),-DOJ32X_SCROLL -DOJ32X_PANEL_DIFF)
 INCS   := -I$(PORT)/include -I$(PORT) -I$(SRC) -I$(EXT)/argparse -I$(EXT)/miniz -I$(EXT)/xmp -I$(EXT)/xmp/src -I$(EXT)/stb
 # -Wno-narrowing: SDL 1.2 rectangles are 16-bit, font.cpp fills them from ints (as with real SDL 1.2)
 CXXFLAGS := -std=gnu++14 $(OPT) $(DEFS) $(INCS) -Wall -Wno-unused-result -Wno-narrowing -MMD -MP
@@ -45,7 +48,7 @@ OBJS := $(addprefix $(OBJDIR)/game/,$(GAME_SRCS:.cpp=.o)) \
         $(addprefix $(OBJDIR)/xmp/,$(XMP_SRCS:.c=.o)) \
         $(addprefix $(OBJDIR)/port/,$(PORT_CXX:.cpp=.o) $(PORT_C:.c=.o))
 
-BIN := openjazz32x_host$(if $(ASAN),_asan)
+BIN := openjazz32x_host$(if $(ASAN),_asan)$(if $(SCROLL),_scroll)
 $(BIN): $(OBJS)
 	$(CXX) $(OPT) -no-pie -o $@ $^ -lm -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free
 

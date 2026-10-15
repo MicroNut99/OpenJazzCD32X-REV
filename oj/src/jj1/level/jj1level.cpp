@@ -894,8 +894,13 @@ int JJ1Level::play () {
 		// worked out first, from the state before the steps (it already looks ahead by the
 		// time not yet stepped), the sprites after them
 		// J23d: with "second cpu off" exactly the J20 order (steps, then draw)
+		// REV (R2): not with the Genesis plane. There the master's part (the ring) is only the
+		// sky and gains nothing from running beside the steps, while the camera from before the
+		// steps puts Jazz in a different place on the screen in each picture (his movement in
+		// this frame's steps): he jittered against the level. Steps first, then the camera from
+		// the state after them, as OpenJazz does.
 		OJ32XStepJob stepJob = { this, 0, 0 };
-		if (plat_slave_logic_on()) {
+		if (plat_slave_logic_on() && !genbg_active()) {
 			oj32x_step_job = &stepJob;
 			oj32x_prof(0);
 			draw();
