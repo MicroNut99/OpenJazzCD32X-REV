@@ -2,7 +2,8 @@
 # make_disc.sh - builds the OpenJazz CD32X REV disc of this folder and puts it into
 # discs/<NAME>/ inside this folder (default NAME: R1). Everything stays inside the folder.
 #   cd /mnt/s/KoboPort/sega-toolchain-12.1/sega/OpenJazzCD32X-REV && NAME=R1 bash tools/make_disc.sh
-# Needs the game files in JazzJackRabbitGame/ (and JAZZXMAS1995/, music/*.wav if wanted).
+# Needs the game files in JazzJackRabbitGame/ (and JAZZXMAS1995/, music/*.wav if wanted; both are
+# copied from ../OpenJazzCD32X when this folder lacks them).
 # The world and bonus packs are kept when cd32x/subcpu/ROMS has them (LEVEL_PACKS=keep);
 # if not, they are taken from ../OpenJazzCD32X/cd32x/subcpu/ROMS (the same packs) when there.
 set -u
@@ -25,6 +26,19 @@ if ! ls "$ROMS"/OJ0*.PAK >/dev/null 2>&1 && [ -d ../OpenJazzCD32X/cd32x/subcpu/R
   cp ../OpenJazzCD32X/cd32x/subcpu/ROMS/OJ*.PAK "$ROMS"/ || fail "copy of the packs failed"
   for f in .bonus_v2 .hh95_complete; do [ -f ../OpenJazzCD32X/cd32x/subcpu/ROMS/$f ] && cp ../OpenJazzCD32X/cd32x/subcpu/ROMS/$f "$ROMS"/; done
 fi
+
+# the music: the WAVs from ../OpenJazzCD32X/music when this folder does not have them all
+if [ -d ../OpenJazzCD32X/music ]; then
+  mkdir -p music
+  for f in ../OpenJazzCD32X/music/*.wav ../OpenJazzCD32X/music/*.WAV; do
+    [ -f "$f" ] || continue
+    b=$(basename "$f")
+    if [ ! -f "music/$b" ] || [ "$(stat -c %s "music/$b")" != "$(stat -c %s "$f")" ]; then
+      cp "$f" "music/$b" || fail "copy of $b failed"
+    fi
+  done
+fi
+[ -d JAZZXMAS1995 ] || { [ -d ../OpenJazzCD32X/JAZZXMAS1995 ] && cp -r ../OpenJazzCD32X/JAZZXMAS1995 .; }
 
 say "Building (this takes a while; the full log goes to build_log.txt)"
 LEVEL_PACKS=keep ./build.sh > build_log.txt 2>&1
