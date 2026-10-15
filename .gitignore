@@ -55,3 +55,4 @@ toolchain_*.tgz
 liblto_plugin.so
 music_copy_done.txt
 copy_log.txt
+_transfer/
