@@ -103,6 +103,9 @@ rm -f "$HERE/mars/obj/port/plat_mars.o" "$HERE/mars/obj/port/plat_mars.d"   # th
 python3 "$HERE/tools/music_lengths.py" "$HERE/tools/music_tracks.txt" "$HERE/music" "$HERE/port/music_lengths.h"   # CD player
 echo "==> engine";      make -C "$HERE/mars" EXTRA_DEFS="$MUSIC_DEFS"
 [ -f "$HERE/mars/OPENJAZZ.32X" ] || { echo "*** mars/OPENJAZZ.32X was not made - stopping"; exit 1; }
+# REV: the engine sits in the cart from 0; the Genesis plane's files from 0x080000
+ENGINE_SIZE=$(stat -c %s "$HERE/mars/OPENJAZZ.32X")
+[ "$ENGINE_SIZE" -le $((0x80000)) ] || { echo "*** the engine is $ENGINE_SIZE bytes: it would reach the Genesis plane's files at cart 0x080000 - stopping"; exit 1; }
 echo "==> ROM check";   python3 "$HERE/cd32x/ref/openlara/tools/prep_openlara_cd.py" "$HERE/mars/OPENJAZZ.32X" "$ROMS/OPENLARA.32X"
 echo "==> SH2 loader";  cd "$HERE/cd32x/sh2"    && make -f Makefile.cdloader clean && make -f Makefile.cdloader
 echo "==> Sub-CPU";     cd "$HERE/cd32x/subcpu" && make clean && make cd
