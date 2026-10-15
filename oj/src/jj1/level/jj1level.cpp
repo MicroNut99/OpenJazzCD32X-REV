@@ -42,6 +42,7 @@
 extern "C" {
 #include "plat.h"
 }
+#include "genbg.h"
 #endif
 #include "jj1levelplayer.h"
 #include "jj1/jj1episodeutils.h"
@@ -137,6 +138,7 @@ JJ1Level::~JJ1Level () {
 #ifdef OJ32X_SCROLL
 	oj32xScrollReset();   // the scrolling renderer's mapping off: back to the plain screen
 #endif
+	genbg_level_left();   // REV: the Genesis plane off
 	video.setClipRect(canvas, nullptr);
 	video.clearScreen(0);
 	oj32x_clear_screens();
@@ -303,6 +305,14 @@ void JJ1Level::setNext (int nextLevel, int nextWorld) {
  */
 void JJ1Level::setTile (unsigned char gridX, unsigned char gridY, unsigned char tile) {
 
+#ifdef OJ32X
+	// REV: the Genesis plane has the map too (port/genbg.h); destructible blocks set their
+	// tile again every frame - only changes go to the 68000
+	if (grid[gridY][gridX].tile != tile) {
+		grid[gridY][gridX].tile = tile;
+		genbgCell(gridX, gridY);
+	}
+#endif
 	grid[gridY][gridX].tile = tile;
 
 	if (multiplayer) {
@@ -409,7 +419,16 @@ void JJ1Level::clearEvent (unsigned char gridX, unsigned char gridY) {
 	if (!grid[gridY][gridX].hits &&
 		eventSet[grid[gridY][gridX].event].strength) return;
 
+#ifdef OJ32X
+	// REV: a foreground tile that becomes a background one goes to the Genesis plane
+	const unsigned char oldEvent = grid[gridY][gridX].event;
+	const bool fgBefore = (oldEvent >= 123 && oldEvent <= 125) ||
+		(eventSet[oldEvent].movement == 37) || (eventSet[oldEvent].movement == 38);
+#endif
 	grid[gridY][gridX].event = 0;
+#ifdef OJ32X
+	if (fgBefore) genbgCell(gridX, gridY);
+#endif
 
 	if (multiplayer) {
 
@@ -1060,6 +1079,22 @@ int JJ1Level::frameSteps (int* profSteps) {
 	}
 
 	return 0;
+
+}
+#endif
+
+
+#ifdef OJ32X
+/**
+ * REV: what the Genesis plane shows in a cell: its tile, or nothing for a foreground tile
+ * (the 32X draws those in front of the sprites, jj1levelframe.cpp).
+ */
+void JJ1Level::genbgCell (unsigned char gridX, unsigned char gridY) {
+
+	const GridElement* ge = &grid[gridY][gridX];
+	const bool fg = (ge->event == 123) || (ge->event == 124) || (ge->event == 125) ||
+		(eventSet[ge->event].movement == 37) || (eventSet[ge->event].movement == 38);
+	genbg_cell(gridX, gridY, fg ? 255 : ge->tile);
 
 }
 #endif

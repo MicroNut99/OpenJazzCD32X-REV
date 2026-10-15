@@ -23,6 +23,7 @@ extern "C" {
 extern "C" {
 #include "cart.h"
 #include "pack.h"
+#include "genbg.h"
 }
 
 #include <stdlib.h>
@@ -281,6 +282,17 @@ int SDL_SetPalette(SDL_Surface *s, int flags, const SDL_Color *colors, int first
 			 * scrolling renderer rotates those, which would change the box's colours */
 			if (i < 156 && v > lightv) { lightv = v; light = i; }
 			if (i < 156 && v < dark2v) { dark2v = v; dark2 = i; }
+		}
+		/* REV: with the Genesis plane, a background entry (sky, plain background) would let the
+		 * plane show in the borders: the darkest of the others */
+		if (genbg_active() && genbg_is_background(best)) {
+			int b2 = -1, b2v = 1 << 30;
+			for (int i = 0; i < 256; ++i) {
+				if (genbg_is_background(i)) continue;
+				const int v = (phys555[i] & 31) + (phys555[i] >> 5 & 31) + (phys555[i] >> 10 & 31);
+				if (v < b2v) { b2v = v; b2 = i; }
+			}
+			if (b2 >= 0) best = b2;
 		}
 		plat_border_colour(best);
 		overlay_dark = dark2;
@@ -993,12 +1005,22 @@ void oj32x_level_pack(const char *levelFile)
 		snprintf(msg, sizeof msg, "LEVEL FILE %s: PACK OJ%03d", b, k);
 		plat_log(msg);
 	}
+	pack_mount_at(2, nullptr);   /* REV: the last world's Genesis plane files are gone */
 	const int32_t len = plat_load_pack(PACK_LEVEL_ID0 + k, PACK_LEVEL_CART, PACK_LEVEL_MAX);
 	if (len > 0 && pack_mount_at(1, plat_cart_ptr(PACK_LEVEL_CART))) {
 		current = k;
 		char msg[40];
 		snprintf(msg, sizeof msg, "LEVEL PACK OJ%03d.PAK", k);
 		plat_log(msg);
+		/* REV: the world's Genesis plane files (GB<k>.PAK, port/genbg.h); worlds the Genesis
+		 * does not draw have none - their levels stay the 32X's */
+		if (k < PACK_BONUS_K) {
+			const int32_t glen = plat_load_pack(PACK_GENESIS_ID0 + k, PACK_GENESIS_CART, PACK_GENESIS_MAX);
+			if (glen > 0 && pack_mount_at(2, plat_cart_ptr(PACK_GENESIS_CART))) {
+				snprintf(msg, sizeof msg, "GENESIS PACK GB%03d.PAK", k);
+				plat_log(msg);
+			}
+		}
 	} else {
 		pack_mount_at(1, nullptr);
 		current = -1;

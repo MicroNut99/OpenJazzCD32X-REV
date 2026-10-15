@@ -45,6 +45,7 @@
 #include "io/log.h"
 #ifdef OJ32X
 #include "oj32x.h"
+#include "genbg.h"
 #endif
 
 #include <string.h>
@@ -474,6 +475,9 @@ int JJ1Level::load (char* fileName, bool checkpoint) {
 	// and planet screen) into the cart. Nothing is loaded when the pack is already there,
 	// e.g. for a planet's second level; otherwise the 32X shows a loading screen.
 	oj32x_level_pack(fileName);
+#endif
+#if defined(OJ32X) && !defined(__sh__)
+	{ extern unsigned int oj32x_sprite_hist[256]; memset(oj32x_sprite_hist, 0, sizeof(oj32x_sprite_hist)); }
 #endif
 
 	// Load font
@@ -1200,6 +1204,50 @@ int JJ1Level::load (char* fileName, bool checkpoint) {
 
 #ifdef OJ32X
 	oj32x_mem_mark("level: loaded");
+#endif
+#ifdef OJ32X
+	// REV: the Genesis plane draws this level's background tiles if its world pack has the
+	// file for it (tools/genesis_convert.py; port/genbg.h)
+	{
+		unsigned char rgb[768];
+		for (int i = 0; i < 256; i++) { rgb[i * 3] = palette[i].r; rgb[i * 3 + 1] = palette[i].g; rgb[i * 3 + 2] = palette[i].b; }
+		genbg_level_loaded(levelNum, sky, rgb);
+	}
+#endif
+#if defined(OJ32X) && !defined(__sh__)
+	// REV: T32X_DUMP_GB=<folder> - the level as the Genesis converter (tools/genesis_convert.py)
+	// reads it: GB<world>_<level>.DMP = "OJGD", effect type, sky, sky orb, tiles, palette
+	// (256 x RGB), sky palette (256 x RGB), tile pixels (tiles x 32 x 32), grid (LH x LW x
+	// {tile, flags: 1 black cell, 2 foreground tile (drawn in front of the sprites)})
+	if (const char* dir = getenv("T32X_DUMP_GB")) {
+		char path[512];
+		snprintf(path, sizeof(path), "%s/GB%03d_%d.DMP", dir, worldNum, levelNum);
+		if (FILE* f = fopen(path, "wb")) {
+			const int nt = tileSet->h / TTOI(1);
+			unsigned char head[8] = { 'O', 'J', 'G', 'D', (unsigned char)type, (unsigned char)sky,
+				skyOrb, (unsigned char)nt };
+			fwrite(head, 1, 8, f);
+			for (int i = 0; i < 256; i++) { fputc(palette[i].r, f); fputc(palette[i].g, f); fputc(palette[i].b, f); }
+			for (int i = 0; i < 256; i++) { fputc(skyPalette[i].r, f); fputc(skyPalette[i].g, f); fputc(skyPalette[i].b, f); }
+			for (int y = 0; y < nt * TTOI(1); y++)
+				fwrite(static_cast<unsigned char*>(tileSet->pixels) + y * tileSet->pitch, 1, TTOI(1), f);
+			for (int y = 0; y < LH; y++)
+				for (int x = 0; x < LW; x++) {
+					const GridElement* ge = &grid[y][x];
+					const bool fg = (ge->event == 123) || (ge->event == 124) || (ge->event == 125) ||
+						(eventSet[ge->event].movement == 37) || (eventSet[ge->event].movement == 38);
+					fputc(ge->tile, f);
+					fputc((ge->bg ? 1 : 0) | (fg ? 2 : 0), f);
+				}
+			// the palette indices the sprites use (counted while they were loaded)
+			extern unsigned int oj32x_sprite_hist[256];
+			for (int i = 0; i < 256; i++) {
+				const unsigned int n = oj32x_sprite_hist[i];
+				fputc(n >> 24, f); fputc(n >> 16, f); fputc(n >> 8, f); fputc(n, f);
+			}
+			fclose(f);
+		}
+	}
 #endif
 	return E_NONE;
 

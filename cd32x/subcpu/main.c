@@ -84,6 +84,11 @@ extern int do_md_cmd3(int cmd, int arg1, int arg2, int arg3);
 #define MD_CMD_INSTALL_EXC    31         /* HW1: 68K exception trap (K29), prints 68K EXC in red */
 #define MD_CMD_SET_VDP_REG    34
 #define MD_CMD_START_D32XR    35         /* D32X M1: 68K -> D32XR's _start (never returns) */
+#define MD_CMD_SET_VSRAM      36         /* CD32X ledger additions: one VSRAM word */
+#define MD_CMD_GENBG_LOAD     37         /* REV: Genesis plane - a level's data (cart offset) */
+#define MD_CMD_GENBG_START    38         /* REV: shown, following the camera (x << 16 | y) */
+#define MD_CMD_GENBG_OFF      39         /* REV: off, the listener's own VDP set-up back */
+#define MD_CMD_GENBG_CELL     40         /* REV: a map tile changed (cell << 16 | tile) */
 /* KOBO K19: hw_md.s set_vdp_reg - one VDP register word */
 
 /* KOBO K19 - GREEN DIAGNOSTIC TEXT.  1 = printed as before (C on the pad shows/hides it).
@@ -647,6 +652,10 @@ int main(void)
                 sprintf(img_name, "OJ%03d.PAK", img_idx - 200);
                 cur_img = 20;                               /* cart 20 * 128 KB = 0x280000 */
             }
+            else if (img_idx >= 1200 && img_idx < 2200) {  /* REV: the Genesis plane's files of a world, GB<n-1200>.PAK */
+                sprintf(img_name, "GB%03d.PAK", img_idx - 1200);
+                cur_img = 4;                                /* cart 4 * 128 KB = 0x080000 (free up to 0x100000) */
+            }
             else if (img_idx <= 0) strcpy(img_name, "IMAGE.RAW");
             else sprintf(img_name, "IMAGE%d.RAW", img_idx);
 
@@ -946,6 +955,21 @@ int main(void)
             sprintf(sfx_name, "SFX%02d.BIN", do_md_cmd1(MD_CMD_READ_32X_16, 0xA15122) & 0xFF);
             int nfx = pcm_load(sfx_name);
             do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA1512C, nfx);
+            do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA15120, 0);
+        }
+        else if (cmd == 67) {
+            /* REV - CMD 67 "Genesis plane" (docs/GENESIS_PLANE.md): COMM2 = what, COMM8/10 (32 bits)
+               = its argument; reply in COMM12 (the 68000's result). 1 load the level's data
+               (argument: its cart offset), 2 show it (camera x << 16 | y), 3 off, 4 a map tile
+               changed (cell << 16 | tile). */
+            int what = do_md_cmd1(MD_CMD_READ_32X_16, 0xA15122);
+            int arg = do_md_cmd1(MD_CMD_READ_32X_32, 0xA15128);
+            int r = 0;
+            if (what == 1) r = do_md_cmd1(MD_CMD_GENBG_LOAD, arg);
+            else if (what == 2) r = do_md_cmd1(MD_CMD_GENBG_START, arg);
+            else if (what == 3) r = do_md_cmd0(MD_CMD_GENBG_OFF);
+            else if (what == 4) r = do_md_cmd1(MD_CMD_GENBG_CELL, arg);
+            do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA1512C, r);
             do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA15120, 0);
         }
         else if (cmd == 52) {

@@ -40,6 +40,7 @@
  */
 #include "plat.h"
 #include "pack.h"
+#include "genbg.h"
 
 #include <ctype.h>
 #include <fcntl.h>
@@ -464,6 +465,109 @@ static void png_chunk(FILE *f, const char *type, const uint8_t *data, uint32_t l
 	fwrite(crc, 1, 4, f);
 }
 
+/* ---- REV: a model of the 68000's Genesis plane (cd32x/subcpu/genbg_md.s) -------------------
+ * Drawn straight from the level's OJGB file for the camera the SH2 hands over (the 68000's
+ * window, scrolling and video memory are checked on their own: tools/genesis_test_rom.sh).
+ * The saved frames show the two pictures together as the console mixes them: a 32X colour
+ * with bit 15 is in front, one without it shows where the Genesis plane is see-through. */
+static const uint8_t *hg_blob;
+static uint8_t hg_map[16384];
+static int hg_shown;
+static bool hg_frame;                  /* this frame is the level's (with the plane) */
+static uint16_t hg_cram[256], hg_c4, hg_c6;
+
+static uint32_t be32(const uint8_t *p) { return (uint32_t)p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
+static uint16_t be16(const uint8_t *p) { return (uint16_t)(p[0] << 8 | p[1]); }
+
+int plat_genbg(int op, uint32_t arg)
+{
+	switch (op) {
+	case GENBG_LOAD: {
+		const uint8_t *b = plat_cart_ptr(arg);
+		if (memcmp(b, "OJGB", 4) != 0 || be16(b + 4) != 3) return 0;
+		hg_blob = b;
+		memcpy(hg_map, b + be32(b + 24), sizeof hg_map);
+		hg_shown = 0;
+		return 1;
+	}
+	case GENBG_START:
+		if (!hg_blob) return 0;
+		hg_shown = 1;
+		return 1;
+	case GENBG_OFF:
+		hg_shown = 0;
+		hg_blob = NULL;
+		return 1;
+	case GENBG_CELL:
+		if (hg_blob) hg_map[(arg >> 16) & 0x3FFF] = (uint8_t)arg;
+		return 1;
+	}
+	return 0;
+}
+
+/* the 64 Genesis colours now: cycles by the vblanks since the start, faded (COMM6) */
+static void hg_colours(uint16_t out[64])
+{
+	const uint8_t *b = hg_blob;
+	for (int i = 0; i < 64; i++) out[i] = be16(b + be32(b + 12) + i * 2);
+	const uint8_t *c = b + be32(b + 32);
+	int groups = be16(c); c += 2;
+	const double vbl = now_ms / (1000.0 / 59.92);
+	for (int g = 0; g < groups; g++) {
+		const int amount = be16(c + 2);
+		const int32_t step = (int32_t)be32(c + 4);
+		const int n = be16(c + 8);
+		const uint8_t *e = c + 10, *col = e + n * 4;
+		long long pos = (long long)(vbl * (double)step);
+		long long m = (long long)amount << 16;
+		pos %= m; if (pos < 0) pos += m;
+		const int P = (int)(pos >> 16);
+		for (int k = 0; k < n; k++) {
+			const int idx = be16(e + k * 4), addr = be16(e + k * 4 + 2);
+			out[addr / 2] = be16(col + ((idx + P) % amount) * 2);
+		}
+		c = col + amount * 2;
+	}
+	static const uint8_t fade[16][8] = {
+		{0,1,2,3,4,5,6,7},{0,1,2,3,3,4,5,6},{0,1,1,2,3,4,4,5},{0,1,1,2,2,3,3,4},
+		{0,0,1,1,2,2,3,3},{0,0,1,1,1,1,2,2},{0,0,0,0,1,1,1,1},{0,0,0,0,0,0,0,0},
+		{0,1,2,3,4,5,6,7},{1,2,3,4,4,5,6,7},{2,3,3,4,5,6,6,7},{3,4,4,5,5,6,6,7},
+		{4,4,5,5,6,6,7,7},{5,5,6,6,6,6,7,7},{6,6,6,6,7,7,7,7},{7,7,7,7,7,7,7,7}};
+	const int f = (hg_c6 >> 11) & 15;
+	if (f & 7)
+		for (int i = 0; i < 64; i++) {
+			const uint16_t w = out[i];
+			out[i] = (uint16_t)(fade[f][(w >> 9) & 7] << 9 | fade[f][(w >> 5) & 7] << 5 | fade[f][(w >> 1) & 7] << 1);
+		}
+}
+
+/* the plane's pixel at world (wx, wy): palette * 16 + entry, 0 = see-through */
+static int hg_pixel(int wx, int wy)
+{
+	const uint8_t *b = hg_blob;
+	if (wx < 0 || wy < 0 || wx >= 8192 || wy >= 2048) return 63;      /* outside: black (B) */
+	const int t = hg_map[(wy >> 5) * 256 + (wx >> 5)];
+	if (t != 255 && t < be16(b + 10)) {
+		const uint16_t word = be16(b + be32(b + 20) + t * 32 + ((wy >> 3) & 3) * 8 + ((wx >> 3) & 3) * 2);
+		if (word) {
+			int v = word & 0x7FF, pid;
+			if (v < 1280) pid = v;
+			else if (v >= 0xB000 / 32 && v < 0xB000 / 32 + 128) pid = 1280 + v - 0xB000 / 32;
+			else if (v >= 0xD000 / 32 && v < 0xD000 / 32 + 96) pid = 1408 + v - 0xD000 / 32;
+			else pid = 1504 + v - 0xF400 / 32;
+			int px = wx & 7, py = wy & 7;
+			if (word & 0x800) px = 7 - px;
+			if (word & 0x1000) py = 7 - py;
+			const uint8_t byte = b[be32(b + 16) + pid * 32 + py * 4 + px / 2];
+			const int e = (px & 1) ? (byte & 15) : (byte >> 4);
+			if (e) return ((word >> 13) & 3) * 16 + e;
+		}
+	}
+	const uint8_t blk = b[be32(b + 28) + (wy >> 5) * 32 + (wx >> 8)];
+	if (blk & (0x80 >> ((wx >> 5) & 7))) return 63;
+	return 0;
+}
+
 static void save_frame(const uint8_t *pixels, int pitch, const uint16_t *pal)
 {
 	char name[512];
@@ -493,6 +597,20 @@ static void save_frame(const uint8_t *pixels, int pitch, const uint16_t *pal)
 				continue;
 			}
 			uint16_t c = pal[idx];
+			if (hg_frame && hg_blob && hg_shown && !(hg_c6 & GENBG_HIDE) && gy >= 0 && gy < PLAT_GAME_H &&
+			    !(hg_cram[idx] & 0x8000)) {
+				/* REV: a background colour - the Genesis plane in front where it is not see-through */
+				static uint16_t gcol[64];
+				if (x == 0 && y == PLAT_TOP_BORDER) hg_colours(gcol);
+				const int e = hg_pixel(hg_c4 + x, (hg_c6 & 0x7FF) + gy);
+				if (e) {
+					const uint16_t w = gcol[e];
+					*r++ = (uint8_t)(((w >> 1) & 7) * 255 / 7);
+					*r++ = (uint8_t)(((w >> 5) & 7) * 255 / 7);
+					*r++ = (uint8_t)(((w >> 9) & 7) * 255 / 7);
+					continue;
+				}
+			}
 			*r++ = (uint8_t)(((c >> 0) & 31) * 255 / 31);
 			*r++ = (uint8_t)(((c >> 5) & 31) * 255 / 31);
 			*r++ = (uint8_t)(((c >> 10) & 31) * 255 / 31);
@@ -578,6 +696,8 @@ static void present_common(const uint8_t *pixels, int pitch, const uint16_t *pal
 
 void plat_present(const uint8_t *pixels, int pitch, const uint16_t *palette555)
 {
+	if (genbg_active()) genbg_plain_screen();   /* REV: not the level: the Genesis plane hidden */
+	hg_frame = false;
 	present_common(pixels, pitch, palette555, false);
 }
 
@@ -588,6 +708,7 @@ void plat_present_hud(const uint8_t *pixels, int pitch, const uint16_t *palette5
 
 /* OpenJazz the cart data area, read-only except during plat_cart_write */
 static uint8_t *cart_mem;
+static uint8_t cart_low[PACK_GENESIS_MAX];   /* REV: cart 0x080000-0x100000 (the Genesis files) */
 static const uint32_t cart_len = PLAT_CART_DATA_END - PLAT_CART_DATA_OFFSET;
 
 static uint32_t cart_pack_len;   /* a pack (T32X_PACK) sits at the start of the data area */
@@ -615,8 +736,19 @@ uint8_t *plat_cart_data(uint32_t *size)
 const uint8_t *plat_cart_ptr(uint32_t cart_offset)
 {
 	cart_map();
+	if (cart_offset < PLAT_CART_DATA_OFFSET) return cart_low + (cart_offset - PACK_GENESIS_CART);
 	return cart_mem + (cart_offset - PLAT_CART_DATA_OFFSET);
 }
+
+/* REV: the cart offset of an address in the cart (the Genesis plane's file, port/genbg.c) */
+uint32_t plat_cart_offset_of(const void *p)
+{
+	cart_map();
+	const uint8_t *b = (const uint8_t *)p;
+	if (b >= cart_low && b < cart_low + sizeof cart_low) return (uint32_t)(b - cart_low) + PACK_GENESIS_CART;
+	return (uint32_t)(b - cart_mem) + PLAT_CART_DATA_OFFSET;
+}
+
 
 int32_t plat_load_pack(int id, uint32_t cart_offset, uint32_t max_bytes)
 {
@@ -624,7 +756,10 @@ int32_t plat_load_pack(int id, uint32_t cart_offset, uint32_t max_bytes)
 	if (!dir || !*dir)
 		return -1;
 	char path[1024];
-	snprintf(path, sizeof path, "%s/OJ%03d.PAK", dir, id - PACK_LEVEL_ID0);
+	if (id >= PACK_GENESIS_ID0)   /* REV: a world's Genesis plane files */
+		snprintf(path, sizeof path, "%s/GB%03d.PAK", dir, id - PACK_GENESIS_ID0);
+	else
+		snprintf(path, sizeof path, "%s/OJ%03d.PAK", dir, id - PACK_LEVEL_ID0);
 	FILE *f = fopen(path, "rb");
 	if (!f)
 		return -1;
@@ -642,7 +777,10 @@ int32_t plat_load_pack(int id, uint32_t cart_offset, uint32_t max_bytes)
 		plat_fatal("cannot read a level pack");
 	fclose(f);
 	cart_map();
-	plat_cart_write(cart_offset - PLAT_CART_DATA_OFFSET, tmp, (size_t)len);
+	if (cart_offset < PLAT_CART_DATA_OFFSET)   /* REV: below the data area (the Genesis files) */
+		memcpy(cart_low + (cart_offset - PACK_GENESIS_CART), tmp, (size_t)len);
+	else
+		plat_cart_write(cart_offset - PLAT_CART_DATA_OFFSET, tmp, (size_t)len);
 	__real_free(tmp);
 	fprintf(stderr, "[host] level pack %s: %ld bytes\n", path, len);
 	return (int32_t)len;
@@ -943,7 +1081,11 @@ void plat_present_scroll(const uint16_t *palette555, int row0, int xoff, int vie
 		else src = host_fb[host_back] + 0x12E00 + (g - viewH) * 320;
 		memcpy(img + g * 320, src, 320);
 	}
-	plat_present(img, 320, palette555);
+	/* REV: the Genesis plane: the CRAM with bit 15 and the camera, as plat_mars.c */
+	hg_frame = genbg_active();
+	if (hg_frame) { genbg_cram(palette555, hg_cram); hg_c4 = genbg_comm4(); hg_c6 = genbg_comm6(); }
+	present_common(img, 320, palette555, false);
+	hg_frame = false;
 	host_back ^= 1;
 }
 void plat_wait_flip(void) { }

@@ -4,6 +4,28 @@ Jazz Jackrabbit (1994, Epic MegaGames) for the **Sega CD + 32X**, built on the O
 All episodes of the CD edition, Holiday Hare '94 and '95, the bonus levels, CD audio music and
 sound effects.
 
+## REV: the Genesis draws the levels
+
+This is the **REV** line of the port: the **Genesis VDP draws the level's background tiles**
+(converted at build time into Genesis tiles, palettes and maps), and the **32X draws only the
+sky, the sprites, the foreground tiles and the status panel** - the 32X no longer redraws tiles
+as the view scrolls. The two pictures are mixed by the console: 32X colours with the priority
+bit are in front of the Genesis, the sky's colours behind it.
+
+- 48 of the 78 levels of Jazz CD are drawn by the Genesis (every level with a sky or a plain
+  background). Levels whose background is made of palette tricks that follow the camera
+  (parallax, diagonal stripes) and water levels still draw everything on the 32X, as before.
+- The Genesis has 61 colours on screen (4 palettes of 15, from 512) where the 32X had 256: the
+  tiles are converted to the nearest Genesis colours; the waterfall and lamp colour cycles keep
+  running (the 68000 rotates them).
+- Details: [docs/GENESIS_PLANE.md](docs/GENESIS_PLANE.md).
+
+**First start of a REV disc: hold A + B + C** while switching on (full reload), so the new
+program replaces the one in the RAM cart.
+
+Build: `NAME=R1 bash tools/make_disc.sh` in this folder (WSL) - the disc goes to
+`discs/R1/OpenJazzCD32X_R1.cue` inside the folder.
+
 ## What you need
 
 - A Sega Genesis / Mega Drive with **Sega CD** and **32X**

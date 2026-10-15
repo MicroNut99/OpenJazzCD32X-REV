@@ -26,7 +26,7 @@ GAME_SRCS := \
 EXT_SRCS := argparse/argparse.c miniz/miniz.c stb/stb_rect_pack.c
 XMP_SRCS := $(notdir $(wildcard $(EXT)/xmp/src/*.c)) $(addprefix loaders/,$(notdir $(wildcard $(EXT)/xmp/src/loaders/*.c)))
 PORT_CXX := sdl_oj.cpp host_new.cpp
-PORT_C   := plat_host.c mixer.c cart.c pack.c pack_bake.c
+PORT_C   := plat_host.c mixer.c cart.c pack.c pack_bake.c genbg.c
 
 OBJDIR := obj$(if $(ASAN),_asan)
 OPT    := $(if $(ASAN),-O1 -g -fsanitize=address -fno-omit-frame-pointer,-O2 -g)

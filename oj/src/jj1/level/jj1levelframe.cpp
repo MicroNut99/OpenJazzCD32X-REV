@@ -43,6 +43,7 @@
 extern "C" {
 #include "plat.h"
 }
+#include "genbg.h"
 #endif
 
 
@@ -313,6 +314,10 @@ void JJ1Level::scrollBg (int rx, int wy, int w, int h) {
 			SDL_FillRect(ring, &clip, 127);
 		}
 
+		// REV: with the Genesis plane on, the background tiles and the black cells are the
+		// Genesis's (port/genbg.h): the ring holds only the sky / plain background
+		if (genbg_active()) { row += n; continue; }
+
 		// the background tiles
 		const int tx0 = ITOT(cur->wx0 + rx), tx1 = ITOT(cur->wx0 + rx + w - 1);
 		const int ty0 = ITOT(row), ty1 = ITOT(row + n - 1);
@@ -423,13 +428,29 @@ void JJ1Level::scrollOrb (int vX, int vY) {
 	const int ox = ((canvasW * 4) / 5) - (vX & 3), oy = ((canvasH - 33) * 3) / 25;
 	const unsigned char* sp = static_cast<const unsigned char*>(tileSet->pixels) + TTOI(skyOrb + (vX & 3)) * tileSet->pitch;
 	const unsigned char key = video.getColorKey(tileSet);
+	const bool plane = genbg_active();
 	for (int y = 0; y < 32; y++, sp += tileSet->pitch) {
 		unsigned char* row = oj32x_screen_row(oy + y);
 		if (!row) continue;
+		const int wy = vY + oy + y;
 		for (int x = 0; x < 32; x++) {
 			const int sx = ox + x;
 			if (sx < 0 || sx >= canvasW) continue;
-			if (sp[x] != key && row[sx] >= 156) oj32x_put_pixel(row + sx, sp[x]);
+			if (sp[x] == key || row[sx] < 156) continue;
+			if (plane) {
+				// REV: the tiles are on the Genesis plane, not in the ring: the sun only where
+				// the level shows sky (no black cell, the tile there see-through)
+				const int wx = vX + sx;
+				if (wx >= TTOI(LW) || wy >= TTOI(LH)) continue;
+				const GridElement* ge = grid[ITOT(wy)] + ITOT(wx);
+				if (ge->bg) continue;
+				if (!fgTile(ge, eventSet)) {
+					const unsigned char* tp = static_cast<const unsigned char*>(tileSet->pixels) +
+						(TTOI(ge->tile) + (wy & 31)) * tileSet->pitch + (wx & 31);
+					if (*tp != key) continue;
+				}
+			}
+			oj32x_put_pixel(row + sx, sp[x]);
 		}
 	}
 	// the background there is restored next time like a sprite's
@@ -647,6 +668,7 @@ void JJ1Level::draw () {
 		scrollBegin(vX, vY, viewH);
 		scrollOrb(vX, vY);
 	}
+	genbg_frame(vX, vY);   // REV: the Genesis plane follows this picture (port/genbg.h)
 #else
 	// PORT32X: the original renderer: sky and background tiles drawn as two bands
 	{

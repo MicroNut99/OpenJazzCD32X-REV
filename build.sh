@@ -9,6 +9,12 @@ set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 trap 'echo; echo "*** BUILD FAILED at line $LINENO: $BASH_COMMAND"; echo "*** look above for the first error (grep -n -B6 Error build_log.txt)"' ERR
 MARKER="SH2-OPENLARA-CD-OL1-LOADER"
+# REV: SEGA_TOOLCHAIN=<folder> - a toolchain somewhere else than /opt/toolchains/sega (sh-elf,
+# m68k-elf, bin/zasm, bootblocks, ldscripts; genisoimage in <folder>/usr/bin if not installed)
+if [ -n "${SEGA_TOOLCHAIN:-}" ]; then
+  export ROOTDIR="$SEGA_TOOLCHAIN" TC="$SEGA_TOOLCHAIN/sh-elf/bin/sh-elf-"
+  export PATH="$PATH:$SEGA_TOOLCHAIN/usr/bin"
+fi
 ROMS="$HERE/cd32x/subcpu/ROMS"
 mkdir -p "$ROMS"
 
@@ -78,6 +84,18 @@ else
   echo "==> no JAZZXMAS1995/ folder: no Holiday Hare '95"
   rm -f "$ROMS"/OJ6*.PAK "$ROMS/SFX01.BIN" "$ROMS/.hh95_complete"
 fi
+# REV: the Genesis plane (docs/GENESIS_PLANE.md) - every level dumped by the PC build, converted
+# into Genesis tiles, palettes and maps, one GB<k>.PAK per world (loaded at cart 0x080000)
+echo "==> Genesis plane"
+rm -f "$ROMS"/GB*.PAK
+GB_DUMPS="$(mktemp -d)"
+"$HERE/tools/dump_levels.sh" "$DATA" "$GB_DUMPS/jazz" "$ROMS/IMAGE8.RAW"
+python3 "$HERE/tools/genesis_pack.py" "$GB_DUMPS/jazz" "$ROMS" 0
+if [ -f "$HH95/PANEL.000" ]; then
+  T32X_HH95=1 "$HERE/tools/dump_levels.sh" "$HH95" "$GB_DUMPS/hh95" "$ROMS/IMAGE8.RAW"
+  python3 "$HERE/tools/genesis_pack.py" "$GB_DUMPS/hh95" "$ROMS" 100
+fi
+rm -rf "$GB_DUMPS"
 # music - WAVs in music/ (named like the game's music files, tools/music_tracks.txt)
 MUSIC_WAVS=$(ls "$HERE"/music/*.wav "$HERE"/music/*.WAV 2>/dev/null | wc -l)
 if [ "$MUSIC_WAVS" -gt 0 ]; then MUSIC_DEFS="-DOJ32X_MUSIC=1"; else MUSIC_DEFS=""; fi

@@ -49,3 +49,9 @@ host/psm2wav
 cd32x/subcpu/soundtrack_cd/
 __pycache__/
 discs/
+JazzJackRabbitGame/
+JAZZXMAS1995/
+toolchain_*.tgz
+liblto_plugin.so
+music_copy_done.txt
+copy_log.txt

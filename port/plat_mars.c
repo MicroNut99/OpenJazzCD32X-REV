@@ -23,6 +23,7 @@
 #include "plat.h"
 #include "cart.h"
 #include "pack.h"
+#include "genbg.h"
 
 #include <malloc.h>
 #include <stdint.h>
@@ -36,6 +37,8 @@
 #define MARS_CMD_CLR     (*(volatile uint16_t *)0x2000401A)
 #define MARS_COMM0       (*(volatile uint16_t *)0x20004020)
 #define MARS_COMM2       (*(volatile uint16_t *)0x20004022)
+#define MARS_COMM4       (*(volatile uint16_t *)0x20004024)   /* REV: camera x for the 68000's Genesis plane */
+#define MARS_COMM6       (*(volatile uint16_t *)0x20004026)   /* REV: camera y, fade, hide (port/genbg.h) */
 #define MARS_COMM8       (*(volatile uint16_t *)0x20004028)
 #define MARS_COMM10      (*(volatile uint16_t *)0x2000402A)
 #define MARS_COMM12      (*(volatile uint16_t *)0x2000402C)
@@ -766,8 +769,17 @@ static void present_finish(volatile uint32_t *blank_line, const uint16_t *palett
 		VDP_CRAM[i] = palette555[i] ? palette555[i] : 0x0400;
 }
 
+/* REV: a screen that is not the level: the Genesis plane hidden at the next vblank */
+static void genbg_hide(void)
+{
+	if (!genbg_active()) return;
+	genbg_plain_screen();
+	MARS_COMM6 = GENBG_HIDE;
+}
+
 void plat_present(const uint8_t *pixels, int pitch, const uint16_t *palette555)
 {
+	genbg_hide();
 	stack_guard_check();
 	write_game_line_table();
 
@@ -827,7 +839,10 @@ void plat_present_scroll(const uint16_t *palette555, int row0, int xoff, int vie
 	{
 		volatile uint32_t *blank = FB32 + SCROLL_BLANK_OFF / 4;
 		for (int x = 0; x < PLAT_SCREEN_W / 4; ++x) blank[x] = border_fill;
-		for (int i = 0; i < 256; ++i) pending_pal[i] = palette555[i] ? palette555[i] : 0x0400;
+		if (genbg_active())               /* REV: bit 15 on all but the background colours */
+			genbg_cram(palette555, (uint16_t *)pending_pal);
+		else
+			for (int i = 0; i < 256; ++i) pending_pal[i] = palette555[i] ? palette555[i] : 0x0400;
 		pace_before_flip();               /* even frame times (median), then out of vblank */
 		const uint16_t cur = VDP_FBCTL & FBCTL_FS;
 		flip_target = cur ^ FBCTL_FS;
@@ -835,6 +850,11 @@ void plat_present_scroll(const uint16_t *palette555, int row0, int xoff, int vie
 		flip_pending = 1;
 		VDP_FBCTL = flip_target;          /* swap at the next vblank; no waiting here */
 		last_flip_vblank = vblank_count;
+		if (genbg_active()) {             /* REV: the 68000 scrolls the Genesis plane to this
+		                                     picture's camera at the same vblank */
+			MARS_COMM4 = genbg_comm4();
+			MARS_COMM6 = genbg_comm6();
+		}
 	}
 #else
 	VDP_SHIFT = (uint16_t)(xoff & 1);
@@ -861,6 +881,7 @@ uint8_t *plat_canvas(void)
 
 void plat_present_canvas(const uint16_t *palette555)
 {
+	genbg_hide();
 	stack_guard_check();
 	write_game_line_table();
 	present_finish(FB32 + (FB_PIX_WORD * 2 + PLAT_GAME_H * PLAT_SCREEN_W) / 4, palette555);
@@ -1230,6 +1251,25 @@ int32_t plat_load_pack(int id, uint32_t cart_offset, uint32_t max_bytes)
 }
 
 void plat_packs_ready(void) { }
+
+/* ---- REV: the Genesis plane (port/genbg.h): Sub-CPU command 67 -> the 68000 (genbg_md.s).
+ * COMM2 = what, COMM8/10 = its argument, reply COMM12. A load copies the level's file from the
+ * cart into video memory (some 70 KB), a start fills the plane: both well under a second. */
+#define CMD_GENBG 67
+
+int plat_genbg(int op, uint32_t arg)
+{
+	MARS_COMM2 = (uint16_t)op;
+	MARS_COMM8_32 = arg;
+	MARS_COMM12 = 0;
+	if (!send_cmd(CMD_GENBG, 4000000UL)) { plat_log("GENBG: COMMAND TIMED OUT"); return -1; }
+	return MARS_COMM12;
+}
+
+uint32_t plat_cart_offset_of(const void *p)
+{
+	return (uint32_t)(uintptr_t)p & 0x3FFFFFu;   /* 0x02xxxxxx / 0x22xxxxxx: the cart */
+}
 
 /* ---- the save area in the RAM cart (main.c OL-9: CMD 58 put one word of the Sub-CPU's
  * 4 KB buffer, CMD 61 buffer -> cart 0x3F0000 + COMM2 * 4 KB through the 68000, read back and

@@ -82,9 +82,17 @@ void Sprite::setOffset (short int x, short int y) {
  * @param height The height of the sprite image
  * @param key The transparent pixel value
  */
+#if defined(OJ32X) && !defined(__sh__)
+/// REV: palette indices the sprites use (T32X_DUMP_GB, jj1levelload.cpp)
+unsigned int oj32x_sprite_hist[256];
+#endif
+
 void Sprite::setPixels (unsigned char *data, int width, int height, unsigned char key) {
 
 	video.destroySurface(pixels);
+#if defined(OJ32X) && !defined(__sh__)
+	if (data) for (int i = 0; i < width * height; i++) if (data[i] != key) oj32x_sprite_hist[data[i]]++;
+#endif
 
 	pixels = video.createSurface(data, width, height);
 	video.enableColorKey(pixels, key);

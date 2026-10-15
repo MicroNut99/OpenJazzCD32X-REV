@@ -53,6 +53,12 @@ extern "C" {
 #define PACK_LEVEL_CART  0x280000u
 #define PACK_LEVEL_MAX   0x170000u   /* up to 0x3F0000, where saves begin */
 #define PACK_BONUS_K     800         /* OJ<800 + n>.PAK = bonus level BONUSMAP.n */
+/* REV: the Genesis plane's files of a world (tools/genesis_pack.py): disc file GB<k>.PAK (k as
+ * the world pack's), command 38 file number PACK_GENESIS_ID0 + k, cart 0x080000 (free up to
+ * the common pack), mounted after the world pack */
+#define PACK_GENESIS_ID0  1200
+#define PACK_GENESIS_CART 0x080000u
+#define PACK_GENESIS_MAX  0x080000u
 
 /* Makes a pack in memory (the cart) known to the game. false: not a pack. */
 bool pack_mount(const uint8_t *base);

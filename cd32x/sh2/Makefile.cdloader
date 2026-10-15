@@ -2,7 +2,7 @@
 # It uses ONLY its own files: cdloader_sh2.c, cdl_crt0.s (our CD-boot start-up, with the CD
 # boot table), cdloader.ld.  D32XR's own crt0.s, linker scripts, headers, objects, Makefile
 # and D32XR.32x are never used, touched or deleted.
-ROOTDIR = /opt/toolchains/sega
+ROOTDIR ?= /opt/toolchains/sega
 PREFIX  = $(ROOTDIR)/sh-elf/bin/sh-elf-
 CC      = $(PREFIX)gcc
 LD      = $(PREFIX)ld

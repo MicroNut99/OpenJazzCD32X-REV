@@ -24,7 +24,8 @@
         .equ    MD_CMD_COPY_FROM_CART, 24
         .equ    MD_CMD_COPY_WORDS, 25
         .equ    MD_CMD_SAFE_CART_XFER, 26
-        .equ    MD_CMD_END, 36              /* KOBO K19: + set_vdp_reg (34); D32X M1: + start_d32xr (35) */
+        .equ    MD_CMD_END, 41              /* KOBO K19: + set_vdp_reg (34); D32X M1: + start_d32xr (35);
+                                               ledger: set_vsram (36); REV: genbg_* (37-40) */
 
 
         .text
@@ -238,11 +239,28 @@ md_check:
         move.l  #-1,0xA12010
         cmpi.b  #MD_CMD_END,d0
         bhs.b   3f
+        /* REV: commands that use the VDP run with interrupts off, so the vblank handler
+           (genbg_vblank) cannot split their VDP address and data writes */
+        cmpi.b  #34,d0
+        beq.b   4f
+        cmpi.b  #32,d0
+        bhs.b   5f
+        move.l  #0x000217F2,d1          /* 1, 4-10, 12, 17 */
+        btst    d0,d1
+        beq.b   5f
+4:      move.w  sr,0xFFEEC0+12          /* GB_V + gbv_sr */
+        move.w  #0x2700,sr
         add.w   d0,d0
         lea     cmd_table(pc),a0
         move.w  0(a0,d0.w),d0
         jsr     0(a0,d0.w)
-        move.l  d0,0xA12010
+        move.w  0xFFEEC0+12,sr
+        bra.b   6f
+5:      add.w   d0,d0
+        lea     cmd_table(pc),a0
+        move.w  0(a0,d0.w),d0
+        jsr     0(a0,d0.w)
+6:      move.l  d0,0xA12010
 3:
         lea     16(sp),sp
         bra     cmd_done
@@ -285,6 +303,11 @@ cmd_table:
         .word   chilly_rv_memcpy - cmd_table    /* 33 */
         .word   set_vdp_reg - cmd_table         /* 34  KOBO K19 */
         .word   start_d32xr - cmd_table         /* 35  D32X M1 */
+        .word   set_vsram - cmd_table           /* 36  CD32X ledger additions */
+        .word   genbg_load - cmd_table          /* 37  REV: Genesis plane - a level's data */
+        .word   genbg_start - cmd_table         /* 38  REV: the plane shown, follows the camera */
+        .word   genbg_off - cmd_table           /* 39  REV: off */
+        .word   genbg_cell - cmd_table          /* 40  REV: a tile of the map changed */
 
 | D32X M1: void start_d32xr(void) - never returns.
 | D32XR's ROM is in the RAM cart.  Interrupts off, cart bank 0, RV off (the SH2 must reach the
@@ -316,6 +339,8 @@ set_vdp_reg:
 md_init_hw:
         movem.l d2-d7/a2-a5,-(sp)
         move.w  #0x2700,sr
+        clr.w   0xFFEEC0                /* REV: GB_V + gbv_on - no Genesis plane updates yet */
+        clr.w   0xFFEEC0+10             /*      GB_V + gbv_ok */
 
 | init joyports
         lea     0xA10000,a5
@@ -1288,6 +1313,7 @@ message6:
 
 vblank_int:
         movem.l d0-d1/a0-a1,-(sp)
+        bsr.w   genbg_vblank            /* REV: Genesis plane - scroll, colours, new cells */
 
         pea     0.w
         bsr.w   get_pad
@@ -1460,6 +1486,8 @@ exc_txt2:
         .align  2
 exc_buf:
         .space  48
+
+        .include "genbg_md.s"
 
         .align  4
 md_init_end:

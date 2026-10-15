@@ -35,7 +35,7 @@ GAME_SRCS := \
 EXT_SRCS := argparse/argparse.c miniz/miniz.c stb/stb_rect_pack.c
 XMP_SRCS := $(notdir $(wildcard $(EXT)/xmp/src/*.c)) $(addprefix loaders/,$(notdir $(wildcard $(EXT)/xmp/src/loaders/*.c)))
 PORT_CXX := sdl_oj.cpp mars_boottest.cpp
-PORT_C   := cart.c pack.c plat_mars.c mars_syscalls.c
+PORT_C   := cart.c pack.c plat_mars.c mars_syscalls.c genbg.c
 
 OBJDIR := obj
 OPT    := $(ARCH) -Os -ffunction-sections -fdata-sections

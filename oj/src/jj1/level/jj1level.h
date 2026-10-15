@@ -303,6 +303,9 @@ class JJ1Level : public Level {
 		int            getWorld      ();
 		void           setNext       (int nextLevel, int nextWorld);
 		void           setTile       (unsigned char gridX, unsigned char gridY, unsigned char tile);
+#ifdef OJ32X
+		void           genbgCell     (unsigned char gridX, unsigned char gridY);
+#endif
 		difficultyType getDifficulty ();
 		JJ1Event*      getEvents     ();
 		JJ1EventType*  getEvent      (unsigned char gridX, unsigned char gridY);
