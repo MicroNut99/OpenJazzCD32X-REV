@@ -1025,7 +1025,7 @@ void oj32x_level_pack(const char *levelFile)
 		const int32_t len = plat_load_pack_at(PACK_LEVEL_ID0 + k, PACK_LEVEL_CART, PACK_LEVEL_MAX);
 		if (len > 0 && pack_mount_at(1, plat_cart_ptr(PACK_LEVEL_CART))) {
 			current = k;
-			const uint32_t g = (PACK_LEVEL_CART + (uint32_t)len + 3) & ~3u;
+			const uint32_t g = (PACK_LEVEL_CART + (uint32_t)len + 0x7FFF) & ~0x7FFFu;   /* a 32 KB boundary */
 			if (gb_id && plat_load_pack_at(gb_id, g, PACK_LEVEL_CART + PACK_LEVEL_MAX - g) > 0)
 				pack_mount_at(2, plat_cart_ptr(g));
 		} else {

@@ -97,8 +97,8 @@ static void tail_read(int p)
 		g->e[i].off = (uint32_t)e[1] << 16 | e[2];
 		g->e[i].len = (uint32_t)e[3] << 16 | e[4];
 		g->e[i].sum = (uint32_t)e[5] << 16 | e[6];
-		const uint32_t end = (g->e[i].off + g->e[i].len + 3) & ~3u;
-		if (end > PAGE_ROOM) { g->n = 0; g->used = 0; return; }
+		if (g->e[i].off > PAGE_ROOM || g->e[i].len > PAGE_ROOM - g->e[i].off) { g->n = 0; g->used = 0; return; }
+		const uint32_t end = (g->e[i].off + g->e[i].len + 0x7FFF) & ~0x7FFFu;
 		if (end > g->used) g->used = end;
 	}
 	if (g->last > clock_now) clock_now = g->last;
@@ -160,7 +160,9 @@ static int add(int p, int id, int32_t len)
 	Entry *e = &g->e[g->n++];
 	e->id = (uint16_t)id; e->off = g->used; e->len = (uint32_t)len;
 	e->sum = sum_of(WIN1 + e->off, e->len);
-	g->used = (g->used + (uint32_t)len + 3) & ~3u;
+	/* the next pack starts on a 32 KB boundary: CMD 46 / 47 work in 32 KB chunks, and the
+	 * Sub-CPU's read-back sets the 1 MB bank once per chunk - a chunk must not cross one */
+	g->used = (g->used + (uint32_t)len + 0x7FFF) & ~0x7FFFu;
 	return 1;
 }
 
@@ -191,7 +193,7 @@ int cartcache_world(int world_id, int gb_id, uint32_t *world_off, uint32_t *gb_o
 	const int32_t wl = plat_pack_open(world_id);
 	const int32_t gl = gb_id ? plat_pack_open(gb_id) : 0;
 	if (wl <= 0) return 0;
-	const uint32_t need = (((uint32_t)wl + 3) & ~3u) + (gl > 0 ? (((uint32_t)gl + 3) & ~3u) : 0);
+	const uint32_t need = (((uint32_t)wl + 0x7FFF) & ~0x7FFFu) + (gl > 0 ? (((uint32_t)gl + 0x7FFF) & ~0x7FFFu) : 0);
 	if (need > PAGE_ROOM) return 0;
 	int best = -1;
 	for (int p = 2; p < pages && best < 0; p++)

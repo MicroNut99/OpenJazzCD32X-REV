@@ -52,6 +52,14 @@ overrides that). Without `CART` the build is the 4 MB REV build, unchanged.
 - **The common pack** (file 8) goes to slot 4.
 - **The 68000 listener does not change.**
 
+**Reviewed (Claude Fable, 19 Oct 2026), and fixed:**
+- **The common pack would not have loaded on the console.** The SH2 asked for file 4 / 3
+  instead of IMAGE8.RAW (file 8). The PC model never runs that path, so it could not show it.
+- **Packs now start on 32 KB boundaries.** The Sub-CPU's compare (CMD 47) sets the 1 MB bank
+  once per 32 KB chunk, so a chunk crossing a bank would have read the wrong memory and cleared
+  good pages.
+- **A damaged page record can no longer point past the page.**
+
 **Checked on the PC** (`make -C host CART=16`, then `T32X_CART_MB=4|8|16` for the modelled
 board and `T32X_CART_FILE=<file>` to keep the pages from one run to the next, like the battery):
 - **16 MB:** worlds 0-3 loaded into pages 2-4; world 0 then came from the cart in the next run.

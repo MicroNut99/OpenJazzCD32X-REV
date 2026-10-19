@@ -109,11 +109,7 @@
 #define CMD_OPEN_FILE    38      /* main.c: COMM2 = file number (n < 100: IMAGE<n>.RAW for cart slot n; 200+: OJ<n-200>.PAK); length -> COMM8 (32 bit) */
 #define CMD_CHUNK_TO_CART 46     /* main.c: COMM2 = 32 KB chunk (bit 15: no read-back); reply COMM12 = bad */
 #define CMD_CHUNK_COMPARE 47     /* main.c: the same, but only compared with the cart (the quick check) */
-#if OJ32X_CART_MB
-#define PACK_SLOT        4       /* R5: main.c (CART_PAGED) puts IMAGE8.RAW at 4 * 128 KB = 0x080000 */
-#else
 #define PACK_SLOT        8       /* IMAGE8.RAW -> cart 8 * 128 KB = 0x100000 = PLAT_CART_DATA_OFFSET */
-#endif
 #define CMD_CHUNK_TO_FB  51      /* main.c: file chunk -> frame buffer (the loader's splash) */
 #define CMD_LOAD_SFX     53      /* main.c: SFX<COMM2>.BIN -> PCM chip; COMM12 = number of effects */
 #define MARS_COMM8_32    (*(volatile uint32_t *)0x20004028)
@@ -408,7 +404,7 @@ static int pack_bad_chunks;
 static int game_hh95;
 static int force_full_load;   /* A+B+C seen on the (unused) game choice screen */
 int plat_game(void) { return game_hh95; }
-static uint32_t pack_slot(void)   { return PACK_SLOT; }
+static uint32_t pack_slot(void)   { return PACK_SLOT; }   /* the FILE number (IMAGE8.RAW): main.c picks the cart slot (CART_PAGED: 0x080000 / 0x060000) */
 static uint32_t pack_offset(void) { return PLAT_CART_DATA_OFFSET; }
 static void sfx_load(void);
 
