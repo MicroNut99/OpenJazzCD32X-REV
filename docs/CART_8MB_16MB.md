@@ -133,9 +133,14 @@ world + GB, set + maps), offset u32, size u32, checksum u32
 - **Making room:** the title takes a free page, or evicts the least recently used page of any
   title, writing a new tail.
 - **The home slot's packs** are recorded in Jazz's own save piece 10 (the port settings piece,
-  which has room). They are verified by checksum on every use, because a title that knows
-  nothing of paging may have overwritten them. That costs ≥ 0.2 s per MB: SH2 cart reads take
-  ≥ 350 ns each (PCB README section 12).
+  which has room).
+- **Every pack is checked by checksum before use, wherever it is.** A tail is not proof:
+  - a title that knows nothing of paging may overwrite the home slot;
+  - Sonic CD32X (R4G, `CD32X_PAGING_SONICCD.md` in the docs repo) uses pages 2-7 with no owner
+    record and leaves the tails alone, so a tail can still list a pack Sonic has overwritten.
+
+  The check costs ≥ 0.2 s per MB, because SH2 cart reads take ≥ 350 ns each (PCB README
+  section 12). That is about 0.1 s for a planet after the trims, behind the planet screen.
 - **Who writes a tail:** the SH2 asks for it. The 68000 copies it into the mapped page with
   CMD 46 or 61, like any other write.
 
@@ -196,7 +201,7 @@ in the cart (about 4 s).
 `oj32x_level_pack` (port/sdl_oj.cpp) becomes:
 
 1. **Look up the pack's group** (world + GB, or bonus set + map) in the directory. If all of it
-   is there and valid (home-slot packs also checked by checksum):
+   is there and its checksum matches:
    1. Map its page (`plat_cart_page`).
    2. Mount it.
    3. Bump the LRU stamp.
