@@ -10,6 +10,8 @@ set -u
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 # R5: CART=8 / CART=16 - the paged cart's test builds (docs/CART_8MB_16MB.md); their default
 # name is R5-8MB / R5-16MB
+# WSL sets NAME to the computer's name in every shell: that NAME is not a build name
+[ "${NAME:-}" = "$(hostname)" ] && NAME=""
 if [ -n "${CART:-}" ]; then NAME="${NAME:-R5-${CART}MB}"; export CART; fi
 NAME="${NAME:-R1}"
 DISCS="$HERE/discs/$NAME"
