@@ -31,8 +31,8 @@ is evicted:
 | Cart | Room for packs | What stays in the cart (*estimate*, after the trims) |
 |---|---|---|
 | 4 MB (today) | 1.4 MB | the current planet only |
-| 8 MB | ~5.3 MB | the ~10 planets / bonus sets played last |
-| 16 MB | ~13.3 MB | Jazz CD's 24 planets, Holiday Hare '94, most of the bonus game. Whatever else is played stays until evicted |
+| 8 MB | ~5.1 MB | the ~10 planets / bonus sets played last |
+| 16 MB | ~12.9 MB | Jazz CD's 24 planets, Holiday Hare '94, most of the bonus game. Whatever else is played stays until evicted |
 
 ## 2. What the board gives software
 
@@ -75,7 +75,7 @@ and the shared files. It is split in two:
 | `0x080000`-`0x1FFFFF` | 1.5 MB | **level-time pack** (page 0): what the game uses during a level (panel, fonts, game files it opens in levels) **plus** the shared files of T3 (0.36 MB) |
 | `0x200000`-… | ~0.7 MB | **menu pack** (page 1): menus, planet screens, demos, title. Used only outside levels, with W1 = 1 |
 | …-`0x3EFFFF` | ~1.25 MB | **home slot**: cached packs, as in an extended page |
-| `0x3F0000`-`0x3FFFFF` | 64 KB | shared save area (piece 14: the page directory, section 4) |
+| `0x3F0000`-`0x3FFFFF` | 64 KB | shared save area (Jazz pieces 0-10; piece 15 is the probe's scratch) |
 
 The split is made by the bake (`T32X_BAKE` runs a level and a menu pass). The build stops if
 the engine and the level-time pack together pass 0x200000. The J13 notes estimate about half
@@ -90,8 +90,8 @@ same page or slot.
 
 | Board | Extended pages | Size |
 |---|---|---|
-| 8 MB | 2, 3 | 4 MB |
-| 16 MB | 2-7 | 12 MB |
+| 8 MB | 2, 3 | 2 × 1.94 MB (the last 64 KB of each page is its tail, section 4) |
+| 16 MB | 2-7 | 6 × 1.94 MB |
 
 ### Rules
 
@@ -104,55 +104,48 @@ same page or slot.
      used by the pause menu's Save / Load / Setup during a level, `level.cpp`);
    - `plat_mars.c`'s `plat_port_setting` reader (`0x223F0000 + piece`).
 
-   The 68000 side of CMD 61 (save piece → cart) sets W1 = 1 around its write and puts back
-   the page it found. The SH2s read the save area cache-through, so no purge is needed.
+   Every save write (CMD 61) is sent with W1 = 1 as well: `plat_save_piece` maps page 1, sends
+   61, and maps back the page it found. The listener does not change. The SH2s read the save
+   area cache-through, so no purge is needed.
 3. **The menu pack is used with W1 = 1 only.** Returning to a menu or the planet screen maps
    W1 = 1 first.
 4. **Before anything leaves the game without a reset** (CMD 60 starting D32XR, any return to
    the BIOS), W1 = 1 is set back.
 
-## 4. The page directory: save piece 14 (shared by every title)
+## 4. Where the cart records what it holds
 
-One 4 KB piece of the save area (`0x3FE000`, free in the ledger's table) records what is
-where, so that a pack loaded once is found again after power-off.
+The boot-stack side follows the shared proposal in the docs repo
+([CD32X_SRAM_PAGING_PROPOSAL.md](https://github.com/MicroNut99/docs/blob/main/CD32X_SRAM_PAGING_PROPOSAL.md),
+variant B, and the comparison
+[CD32X_PAGED_CART_STACK_PROPOSAL.md](https://github.com/MicroNut99/docs/blob/main/CD32X_PAGED_CART_STACK_PROPOSAL.md)).
+
+**The last 64 KB of every extended page** (the page tail) is the page's record:
 
 ```
-0    "CPGD"  version u16  pages u8 (detected: 2, 4 or 8)  entries u8
-8    clock u32                      (bumped at every use: the LRU stamp)
-12   127 entries of 32 bytes:
-       title[4]   ("OJAZ", "HURR", ...)    pack id u16    page u8    flags u8
-       offset u32 (inside the page)        size u32
-       checksum u32 (the pack as on the disc)   disc mark u32 (the disc's build id)
-       last use u32   group u16 (packs that must stay together: world + GB, set + maps)
-       reserved[2]
+"PGTL"  version u16  title[4] ("OJAZ", "HURR", ...)  disc mark u32 (the disc's build id)
+last use u32 (a clock bumped at every use: the LRU stamp)
+entries u16, then per pack: pack id u16, group u16 (packs that must stay together:
+world + GB, set + maps), offset u32, size u32, checksum u32
 ```
 
-- **Finding a pack:** a title finds its pack by title, pack id and disc mark. A rebuilt disc
-  has a new mark, so stale copies never match.
-- **Making room:** the title evicts least-recently-used groups (of any title) that overlap the
-  room it needs.
-- **Packs in the home slot are verified before use.** A title that knows nothing of the
-  directory may have overwritten them. A checksum costs ≥ 0.2 s per MB, because SH2 cart reads
-  take ≥ 350 ns each (PCB README section 12). **Packs in extended pages are trusted:** only
-  titles that keep the directory write there.
-- **Who writes it:** the SH2 writes the directory through CMD 61, like any save piece.
+- **Finding a pack:** a title reads the tails of pages 2-7 and finds its pack by title, pack id
+  and disc mark. A rebuilt disc has a new mark, so stale copies never match.
+- **Making room:** the title takes a free page, or evicts the least recently used page of any
+  title, writing a new tail.
+- **The home slot's packs** are recorded in Jazz's own save piece 10 (the port settings piece,
+  which has room). They are verified by checksum on every use, because a title that knows
+  nothing of paging may have overwritten them. That costs ≥ 0.2 s per MB: SH2 cart reads take
+  ≥ 350 ns each (PCB README section 12).
+- **Who writes a tail:** the SH2 asks for it. The 68000 copies it into the mapped page with
+  CMD 46 or 61, like any other write.
 
-### Detecting the board (68000, at boot, RV = 1, interrupts off)
+**Detecting the board:** the SH2 does it with CMD 68 + 58 / 61, as the shared proposal
+describes:
+- a marker in each page's tail, then its inverse (so a floating bus cannot echo it);
+- the marker on page 1 goes into the free **piece 15**, never into a piece a title owns.
 
-The probe overwrites nothing for good: the words it uses are saved and put back.
-
-1. With W1 = p, read the probe word (the last word of piece 14, cart `0x3FEFFE`) of pages
-   0-7 and keep the 8 values.
-2. Write marker `0xC0DE + p` into page p, for p = 0 ... 7 in that order.
-3. Read the 8 words back:
-   - all 8 hold their own marker: **16 MB**;
-   - pages 4-7 hold their own markers and pages 0-3 hold `0xC0DE + p + 4` (the later writes to
-     4-7 landed in 0-3): **8 MB**;
-   - every page reads `0xC0DE + 7` (all writes landed in page 1: the register write never
-     reached the cart): **4 MB**;
-   - anything else (for example a 16 MB mapper with U2 not fitted): treat as **4 MB** and show
-     a warning on the splash.
-4. Write the 8 saved values back in reverse order, and leave W1 = 1.
+The result is 4 MB (no mapper), 8 MB (pages 4-7 mirror 0-3) or 16 MB. Anything else counts as
+4 MB, with a warning on the splash.
 
 ## 5. Fitting the packs (Jazz numbers)
 
@@ -190,9 +183,9 @@ After the trims (*estimate*, simulation over the real packs):
 | Holiday Hare '95 | ~4.4 MB | ~0.5 MB |
 | **Total** | **~18.7 MB** | |
 
-- **16 MB** has room for ~13.3 MB of packs (12 MB extended + ~1.25 MB home slot): everything
-  except about 5 MB.
-- **8 MB** has room for ~5.3 MB: a working set of about 10 planets.
+- **16 MB** has room for ~12.9 MB of packs (11.6 MB extended + ~1.25 MB home slot): everything
+  except about 6 MB.
+- **8 MB** has room for ~5.1 MB: a working set of about 10 planets.
 
 The trims also make every first load shorter, including on the 4 MB cart. A planet goes from
 0.7-1.0 MB to 0.3-0.5 MB (15-20 s instead of 30-45 s). A bonus map is 0.13 MB once its set is
@@ -220,45 +213,52 @@ in the cart (about 4 s).
    slot 20, GB → slot 4, IMAGE8 → slot 8, `main.c`). It gets a destination: COMM8L = cart
    offset (4-byte aligned), used when COMM2 bit 15 is set. CMD 46 then writes chunk n at
    destination + n × 32 KB. Without bit 15 it behaves as today.
-4. **Record it:** write the directory piece (CMD 61, W1 = 1 for the write), map the page again,
-   mount.
+4. **Record it:** write the page's tail (section 4), or Jazz's piece 10 for the home slot (with
+   W1 = 1), then map the page again and mount.
 
 `genbg` (port/genbg.c) needs no change. It hands the 68000 `plat_cart_offset_of(data)` =
 0x2xxxxx, and `gb_copy` reads that through the 0x900000 bank window (bank = (offset >> 20) & 3),
 which shows the page now in window 1. The vblank handler reads only work RAM and COMM
 registers, and `genbg_load` runs with interrupts off.
 
-## 7. Commands (registered in the CD32X Command Ledger before use)
+## 7. Commands
 
-| Where | Number | Name | Arguments | Reply |
-|---|---|---|---|---|
-| SH2 → Sub-CPU | **68** | cart page | COMM2 = page 0-7 (bit 15: probe) | COMM12 = page now in W1; probe: pages (2 / 4 / 8) |
-| Sub-CPU → 68000 | **42** | `cart_page` | page, probe flag | RV = 1, interrupts off, `move.b d0,0xA130F2`, RV back; keeps the page in work RAM for CMD 61 |
-| SH2 → Sub-CPU | **38** (extended) | open file | COMM2 bit 15 + COMM8L = cart destination | as today |
+The shared proposal, variant B:
+- **SH2 → Sub-CPU CMD 68:** window 1's page. COMM2 = page 1-7, reply COMM12 = 1 / 0.
+- The Sub-CPU writes the byte with the listener's existing `chilly_rv_memcpy` (MD 33: RV = 1,
+  one `move.b` to `0xA130F2`, RV = 0).
+- **The 68000 listener does not change.**
+
+What Jazz / Hurrican add on top:
+- **CMD 38's destination offset.** COMM8L = a 4-byte-aligned offset in window 1, used when a
+  flag bit is set. It is refused past 0x1F0000 (the page tail). CMD 46 then writes chunk n at
+  offset + n × 32 KB. Without the flag CMD 38 behaves as today, picking the slot from the file
+  id (OJ → slot 20, GB → 4, IMAGE8 → 8).
+- **W1 = 1 before CMD 60** (start D32XR) and any other hand-over that is not a reset.
 
 How a page switch runs:
-
-1. The master SH2 waits for CMD 68's reply in SDRAM code, never on the cart: RV = 1 locks the
-   SH2s out of the cart during the write.
-2. The slave is idle between levels, in its cached wait loop.
+1. The master SH2 waits for CMD 68's reply in SDRAM code, because RV = 1 locks the SH2s out of
+   the cart.
+2. The slave is idle between levels, in its cached loop.
 3. After the reply the master purges its cache. The slave already purges before every job
    (`plat_mars.c`).
 
-- **CMD 61** (save piece) changes only on the 68000 side: W1 = 1 around its write.
-- **Ledger clash to fix first:** REV R1-R4 use CMD 67 for the Genesis plane and 68000 routines
-  37-40. The ledger has CMD 67 = cart → VRAM columns and MD 37 = `copy_vram_col` (SuperTux
-  REV4). Move the Genesis plane to **CMD 69** and **MD 38-41** and register them, before
-  68 / 42 are added. `MD_CMD_END` then becomes 43.
+`chilly_rv_memcpy` runs with interrupts on. Jazz's vblank handler (the Genesis plane) reads only
+work RAM and COMM registers, so that is safe here.
+
+**Ledger clash to fix first:** REV R1-R4 use CMD 67 for the Genesis plane and 68000 routines
+37-40. The ledger has CMD 67 = cart → VRAM columns and MD 37 = `copy_vram_col` (SuperTux REV4).
+The Genesis plane moves to **CMD 70** and **MD 38-41**, registered when it moves.
 
 ## 8. Where each change goes
 
 | Part | Change |
 |---|---|
-| `cd32x/subcpu/hw_md.s` | `cart_page` (42) with the probe; CMD 61's write with W1 = 1 |
-| `cd32x/subcpu/main.c` | CMD 68; CMD 38's destination argument; the Genesis plane renumbered to CMD 69; W1 = 1 before CMD 60 |
-| `port/plat_mars.c` | `plat_cart_page(p)` (master waits in SDRAM, then purges); `save_area_map/unmap`; directory read / write; `plat_port_setting` through the wrapper |
+| `cd32x/subcpu/hw_md.s` | no change (the Genesis plane's routines renumbered to MD 38-41) |
+| `cd32x/subcpu/main.c` | CMD 68 (shared proposal, variant B); CMD 38's destination offset; the Genesis plane renumbered to CMD 70; W1 = 1 before CMD 60 |
+| `port/plat_mars.c` | `plat_cart_page(p)` (master waits in SDRAM, then purges); `save_area_map/unmap`; `plat_save_piece` with W1 = 1; the probe; `plat_port_setting` through the wrapper |
 | `port/mars_syscalls.c` | `piece_at` / `SAVE_AREA` readers through `save_area_map` |
-| `port/cartdir.c` (new) | the directory: find, place (groups, first-fit, LRU), checksum, record |
+| `port/cartdir.c` (new) | page tails and the home-slot record: find, place (groups, first-fit, LRU), checksum, record |
 | `port/sdl_oj.cpp` | `oj32x_level_pack` as in section 6; the level-time pack mounted at start-up, the menu pack in menus |
 | `port/pack.h` | slots: level-time 0x080000-0x1FFFFF, menu pack at 0x200000, home slot up to 0x3EFFFF, extended pages |
 | `jj1levelframe.cpp`, `jj1levelload.cpp` | T2: the reduced tile picture (foreground tile → its place, mask for the others, stored tile count) |
