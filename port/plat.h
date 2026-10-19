@@ -168,7 +168,11 @@ unsigned int plat_net_recv(uint8_t *bytes, unsigned int most);   /* bytes waitin
  * size; plat_cart_write copies bytes to an offset in it (32X: stops with an error screen -
  * the SH2 cannot write the cart, packs come from the disc; PC: a mapping made writable just
  * for the copy). */
+#if OJ32X_CART_MB
+#define PLAT_CART_DATA_OFFSET 0x080000   /* R5: the common pack right after the engine, in page 0 */
+#else
 #define PLAT_CART_DATA_OFFSET 0x100000   /* after the first 1 MB, kept for the engine (0.43 MB) */
+#endif
 #define PLAT_CART_DATA_END    0x3F0000   /* 0x3F0000.. settings and saves (as OpenLara) */
 uint8_t *plat_cart_data(uint32_t *size);
 void plat_cart_write(uint32_t offset, const void *src, size_t bytes);
@@ -180,6 +184,31 @@ void plat_cart_write(uint32_t offset, const void *src, size_t bytes);
  * nothing, it was loaded at start-up). plat_cart_ptr: the address of a cart offset. */
 int32_t plat_load_pack(int id, uint32_t cart_offset, uint32_t max_bytes);
 void plat_packs_ready(void);
+
+#if OJ32X_CART_MB
+/* R5, the 8 / 16 MB cart (docs/CART_8MB_16MB.md, port/cartcache.c). The cart's 16 MB in 2 MB
+ * pages; window 1 (cart 0x200000-0x3FFFFF) shows one of them, page 1 after reset.
+ *   plat_cart_page       window 1 -> page 1-7 (32X: Sub-CPU CMD 68; then the cache purge)
+ *   plat_cart_page_now   the page window 1 shows
+ *   plat_pack_open       a pack's length on the disc (CMD 38), <= 0: none
+ *   plat_load_pack_at    a pack from the disc to <cart_offset> (CMD 38 with the destination,
+ *                        CMD 46), with the loading screen; returns its length
+ *   plat_pack_same_as_disc  the first and last 32 KB of the pack at <cart_offset> equal the
+ *                        disc's (CMD 47, nothing written)
+ *   plat_cart_piece_write / _read  one 4 KB piece at window 1 + 0x1F0000 + piece * 4 KB of
+ *                        the page mapped now (CMD 58 + 61, read back; SH2 reads). On page 1
+ *                        that is the save area: only pieces 14 and 15 are used this way.
+ *   plat_save_area_enter / _leave  map page 1 around a save-area access, then back */
+int plat_cart_page(int page);
+int plat_cart_page_now(void);
+int32_t plat_pack_open(int id);
+int32_t plat_load_pack_at(int id, uint32_t cart_offset, uint32_t max_bytes);
+int plat_pack_same_as_disc(int id, uint32_t cart_offset, uint32_t len);
+int plat_cart_piece_write(int piece, const uint16_t *words, int n);
+void plat_cart_piece_read(int piece, uint16_t *words, int n);
+void plat_save_area_enter(void);
+void plat_save_area_leave(void);
+#endif
 
 /* fn(arg, 1) on the slave SH2 while fn(arg, 0) runs here; returns when both are done.
  * Only in builds with OJ32X_SLAVE_DRAWS (measured: no gain, both SH2s wait on the same bus);

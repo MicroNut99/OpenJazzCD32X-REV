@@ -109,7 +109,11 @@
 #define CMD_OPEN_FILE    38      /* main.c: COMM2 = file number (n < 100: IMAGE<n>.RAW for cart slot n; 200+: OJ<n-200>.PAK); length -> COMM8 (32 bit) */
 #define CMD_CHUNK_TO_CART 46     /* main.c: COMM2 = 32 KB chunk (bit 15: no read-back); reply COMM12 = bad */
 #define CMD_CHUNK_COMPARE 47     /* main.c: the same, but only compared with the cart (the quick check) */
+#if OJ32X_CART_MB
+#define PACK_SLOT        4       /* R5: main.c (CART_PAGED) puts IMAGE8.RAW at 4 * 128 KB = 0x080000 */
+#else
 #define PACK_SLOT        8       /* IMAGE8.RAW -> cart 8 * 128 KB = 0x100000 = PLAT_CART_DATA_OFFSET */
+#endif
 #define CMD_CHUNK_TO_FB  51      /* main.c: file chunk -> frame buffer (the loader's splash) */
 #define CMD_LOAD_SFX     53      /* main.c: SFX<COMM2>.BIN -> PCM chip; COMM12 = number of effects */
 #define MARS_COMM8_32    (*(volatile uint32_t *)0x20004028)
@@ -1252,6 +1256,118 @@ int32_t plat_load_pack(int id, uint32_t cart_offset, uint32_t max_bytes)
 
 void plat_packs_ready(void) { }
 
+#if OJ32X_CART_MB
+/* ---- R5: the 8 / 16 MB cart (port/plat.h, port/cartcache.c, docs/CART_8MB_16MB.md) ---- */
+#define CMD_CART_PAGE 68
+static int page_now = 1;                 /* window 1's page: 1 after reset */
+static int save_depth, save_page;
+
+int plat_cart_page_now(void) { return page_now; }
+
+int plat_cart_page(int page)
+{
+	if (page < 1 || page > 7) return 0;
+	if (page == page_now) return 1;
+	MARS_COMM2 = (uint16_t)page;
+	MARS_COMM12 = 0;
+	if (!send_cmd(CMD_CART_PAGE, 2000000UL)) { plat_log("CART PAGE: COMMAND TIMED OUT"); return 0; }
+	const int ok = MARS_COMM12 != 0;
+	if (ok) page_now = page;
+	*(volatile uint8_t *)0xFFFFFE92 = 0x11;   /* purge: window 1 shows other memory now (the
+	                                            slave purges before each job) */
+	return ok;
+}
+
+int32_t plat_pack_open(int id)
+{
+	MARS_COMM2 = (uint16_t)id;
+	MARS_COMM8_32 = 0;
+	if (!send_cmd(CMD_OPEN_FILE, 2000000UL)) return -1;
+	return (int32_t)MARS_COMM8_32;
+}
+
+/* CMD 38 with the destination (COMM2 bit 15, COMM8 = cart offset): CMD 46 / 47 then use it */
+static int32_t open_at(int id, uint32_t cart_offset)
+{
+	MARS_COMM2 = (uint16_t)(id | 0x8000);
+	MARS_COMM8_32 = cart_offset;
+	if (!send_cmd(CMD_OPEN_FILE, 2000000UL)) return -1;
+	return (int32_t)MARS_COMM8_32;
+}
+
+int32_t plat_load_pack_at(int id, uint32_t cart_offset, uint32_t max_bytes)
+{
+	const int32_t l = plat_pack_open(id);
+	if (l <= 0) { plat_log("LEVEL PACK: NOT ON THE DISC"); return -1; }
+	const uint32_t len = (uint32_t)l;
+	if (len > max_bytes) { plat_log("LEVEL PACK: TOO BIG FOR THE CART"); return -2; }
+	loading_screen();
+	if (open_at(id, cart_offset) != l) { plat_log("LEVEL PACK: REOPEN FAILED"); return -1; }
+	MARS_COMM8_32 = len;
+	const uint32_t chunks = (len + 32767) >> 15;
+	int bad = 0;
+	for (uint32_t c = 0; c < chunks; c++)
+	{
+		MARS_COMM2 = (uint16_t)(c | 0x8000);   /* no read-back */
+		MARS_COMM12 = 0;
+		if (!send_cmd(CMD_CHUNK_TO_CART, 2000000UL) || MARS_COMM12 != 0)
+			bad++;
+		for (int i = 0; i < 2; i++) { splash_bar(c + 1, chunks); flip_wait(); }
+	}
+	*(volatile uint8_t *)0xFFFFFE92 = 0x11;   /* purge the cache: the 68000 wrote the cart */
+	if (bad) { plat_log("LEVEL PACK: BAD CHUNKS"); return -3; }
+	return l;
+}
+
+int plat_pack_same_as_disc(int id, uint32_t cart_offset, uint32_t len)
+{
+	if (open_at(id, cart_offset) != (int32_t)len) return 0;
+	const uint32_t chunks = (len + 32767) >> 15;
+	const uint32_t probe[2] = { 0, chunks - 1 };
+	for (int i = 0; i < 2; i++)
+	{
+		MARS_COMM2 = (uint16_t)probe[i];
+		MARS_COMM8_32 = len;
+		MARS_COMM12 = 0;
+		if (!send_cmd(CMD_CHUNK_COMPARE, 2000000UL) || MARS_COMM12 != 0) return 0;
+	}
+	return 1;
+}
+
+int plat_save_put_word(int index, int value);
+#define CMD_SAVE_PIECE_RAW 61
+int plat_cart_piece_write(int piece, const uint16_t *words, int n)
+{
+	for (int i = 0; i < n; i++) plat_save_put_word(i, words[i]);
+	MARS_COMM2 = (uint16_t)piece;
+	MARS_COMM12 = 0;
+	send_cmd(CMD_SAVE_PIECE_RAW, 8000000UL);
+	*(volatile uint8_t *)0xFFFFFE92 = 0x11;
+	return MARS_COMM12 != 0;
+}
+
+void plat_cart_piece_read(int piece, uint16_t *words, int n)
+{
+	const volatile uint8_t *p = (const volatile uint8_t *)(0x223F0000u + (uint32_t)piece * 4096u);
+	for (int i = 0; i < n; i++) words[i] = (uint16_t)(p[2 * i] << 8 | p[2 * i + 1]);
+}
+
+/* the save area (pieces 0-13 of page 1) is only seen with page 1 in window 1 */
+void plat_save_area_enter(void)
+{
+	if (save_depth++ == 0 && page_now != 1) { save_page = page_now; plat_cart_page(1); }
+}
+void plat_save_area_leave(void)
+{
+	if (save_depth > 0 && --save_depth == 0 && save_page) { plat_cart_page(save_page); save_page = 0; }
+}
+#define SAVE_AREA_ENTER() plat_save_area_enter()
+#define SAVE_AREA_LEAVE() plat_save_area_leave()
+#else
+#define SAVE_AREA_ENTER() ((void)0)
+#define SAVE_AREA_LEAVE() ((void)0)
+#endif
+
 /* ---- REV: the Genesis plane (port/genbg.h): Sub-CPU command 67 -> the 68000 (genbg_md.s).
  * COMM2 = what, COMM8/10 = its argument, reply COMM12. A load copies the level's file from the
  * cart into video memory (some 70 KB), a start fills the plane: both well under a second. */
@@ -1286,11 +1402,14 @@ int plat_save_put_word(int index, int value)
 
 int plat_save_piece(int piece)
 {
+	SAVE_AREA_ENTER();
 	MARS_COMM2 = (uint16_t)piece;
 	MARS_COMM12 = 0;
 	send_cmd(CMD_SAVE_PIECE, 8000000UL);
-	if (MARS_COMM12 == 0) { plat_log("SAVE: WRITING THE CART SAVE AREA FAILED"); return 0; }
+	const int ok = MARS_COMM12 != 0;
 	*(volatile uint8_t *)0xFFFFFE92 = 0x11;   /* purge: the 68000 wrote the cart */
+	SAVE_AREA_LEAVE();
+	if (!ok) { plat_log("SAVE: WRITING THE CART SAVE AREA FAILED"); return 0; }
 	return 1;
 }
 
@@ -1301,9 +1420,14 @@ int plat_port_setting(int key)
 {
 	const volatile uint8_t *p = (const volatile uint8_t *)(0x223F0000u + PORT_SET_PIECE * 4096u);
 	if (key < 0 || key > 7) return 0;
+	SAVE_AREA_ENTER();
+	int v;
 	if (p[0] != 'O' || p[1] != 'J' || p[2] != 'P' || p[3] != 'S')
-		return key == 0 ? 1 : 0;        /* nothing saved yet - the FPS counter starts on */
-	return p[4 + key];
+		v = key == 0 ? 1 : 0;           /* nothing saved yet - the FPS counter starts on */
+	else
+		v = p[4 + key];
+	SAVE_AREA_LEAVE();
+	return v;
 }
 void plat_port_setting_set(int key, int value)
 {

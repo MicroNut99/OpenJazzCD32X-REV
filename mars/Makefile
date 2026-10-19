@@ -35,9 +35,11 @@ GAME_SRCS := \
 EXT_SRCS := argparse/argparse.c miniz/miniz.c stb/stb_rect_pack.c
 XMP_SRCS := $(notdir $(wildcard $(EXT)/xmp/src/*.c)) $(addprefix loaders/,$(notdir $(wildcard $(EXT)/xmp/src/loaders/*.c)))
 PORT_CXX := sdl_oj.cpp mars_boottest.cpp
-PORT_C   := cart.c pack.c plat_mars.c mars_syscalls.c genbg.c
+PORT_C   := cart.c pack.c plat_mars.c mars_syscalls.c genbg.c cartcache.c
 
-OBJDIR := obj
+# R5: CART=8 / CART=16 - the paged cart's test builds (docs/CART_8MB_16MB.md), objects of their own
+OBJDIR := obj$(if $(CART),_cart$(CART))
+DEFS_CART := $(if $(CART),-DOJ32X_CART_MB=$(CART))
 OPT    := $(ARCH) -Os -ffunction-sections -fdata-sections
 DEFS   := -DOJ32X -DOJ32X_MARS -DOJ_SDL1 -DPORTABLE -DNDEBUG \
           -DOJ_VERSION=\"git-oj32x\" -DOJ_DATE=\"2026-10-06\" -D__32X__ -DMARS \
@@ -45,7 +47,7 @@ DEFS   := -DOJ32X -DOJ32X_MARS -DOJ_SDL1 -DPORTABLE -DNDEBUG \
           -DLIBXMP_CORE_PLAYER -DLIBXMP_STATIC -DXMP_SYM_VISIBILITY
 INCS   := -I$(PORT)/include -I$(PORT) -I$(SRC) -I$(EXT)/argparse -I$(EXT)/miniz -I$(EXT)/xmp -I$(EXT)/xmp/src -I$(EXT)/stb
 # build.sh passes EXTRA_DEFS=-DOJ32X_MUSIC=1 when music/*.wav exist
-DEFS += $(EXTRA_DEFS)
+DEFS += $(EXTRA_DEFS) $(DEFS_CART)
 # the frame profiler box in levels - off; add -DOJ32X_PROFILE to bring it back
 # the line-table scrolling renderer (remove for the old full-redraw renderer)
 DEFS += -DOJ32X_SCROLL

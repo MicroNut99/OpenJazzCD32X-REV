@@ -17,6 +17,12 @@ if [ -n "${SEGA_TOOLCHAIN:-}" ]; then
 fi
 ROMS="$HERE/cd32x/subcpu/ROMS"
 mkdir -p "$ROMS"
+# R5: CART=8 / CART=16 - the paged cart's test builds (docs/CART_8MB_16MB.md): the common pack
+# at cart 0x080000, the worlds kept in the cart's extra pages, Sub-CPU CMD 68 (window 1's page)
+# and CMD 38's destination. Unset: the 4 MB REV build, unchanged.
+CART="${CART:-}"
+case "$CART" in ""|8|16) ;; *) echo "*** CART must be 8 or 16 (or unset) - stopping"; exit 1;; esac
+[ -n "$CART" ] && echo "==> cart: the $CART MB test build"
 
 grep -q '^#define CDL_TARGET_OPENLARA 1' "$HERE/cd32x/sh2/cdloader_sh2.c" \
   || { echo "*** cd32x/sh2/cdloader_sh2.c is not in OpenLara mode - stopping"; exit 1; }
@@ -39,6 +45,8 @@ rm -f "$ROMS/IMAGE8.RAW"
   T32X_MAX_FRAMES=960 T32X_MAX_SECONDS=100000 T32X_PAD="$TOUR" "$HERE/host/openjazz32x_host" "$DATA" 2>&1 | grep "\[bake\]" )
 SIZE=$(stat -c %s "$ROMS/IMAGE8.RAW")
 [ "$SIZE" -le $((0x180000)) ] || { echo "*** IMAGE8.RAW is $SIZE bytes: more than the 1.5 MB before the level pack area - stopping"; exit 1; }
+# R5: the paged builds put the common pack at 0x080000; it must end before page 0's tail (0x1F0000)
+if [ -n "$CART" ]; then [ "$SIZE" -le $((0x170000)) ] || { echo "*** IMAGE8.RAW is $SIZE bytes: more than the $((0x170000)) page 0 has for it - stopping"; exit 1; }; fi
 # check: the same tour from the pack alone (no data folder) gives the same pictures
 ( cd "$BAKE_TMP" && mkdir a b && \
   T32X_SKIP_INTRO=1 T32X_SAVE_EVERY=20 T32X_FRAMES_DIR="$BAKE_TMP/a" T32X_MAX_FRAMES=940 T32X_MAX_SECONDS=100000 \
@@ -99,16 +107,18 @@ rm -rf "$GB_DUMPS"
 # music - WAVs in music/ (named like the game's music files, tools/music_tracks.txt)
 MUSIC_WAVS=$(ls "$HERE"/music/*.wav "$HERE"/music/*.WAV 2>/dev/null | wc -l)
 if [ "$MUSIC_WAVS" -gt 0 ]; then MUSIC_DEFS="-DOJ32X_MUSIC=1"; else MUSIC_DEFS=""; fi
-rm -f "$HERE/mars/obj/port/plat_mars.o" "$HERE/mars/obj/port/plat_mars.d"   # the switch lives there
+rm -f "$HERE"/mars/obj*/port/plat_mars.o "$HERE"/mars/obj*/port/plat_mars.d   # the switch lives there
+# R5: the 4 MB and the CART builds keep their own objects: link the engine again every time
+rm -f "$HERE/mars/openjazz32x.elf" "$HERE/mars/openjazz32x.bin" "$HERE/mars/OPENJAZZ.32X"
 python3 "$HERE/tools/music_lengths.py" "$HERE/tools/music_tracks.txt" "$HERE/music" "$HERE/port/music_lengths.h"   # CD player
-echo "==> engine";      make -C "$HERE/mars" EXTRA_DEFS="$MUSIC_DEFS"
+echo "==> engine";      make -C "$HERE/mars" EXTRA_DEFS="$MUSIC_DEFS" CART="$CART"
 [ -f "$HERE/mars/OPENJAZZ.32X" ] || { echo "*** mars/OPENJAZZ.32X was not made - stopping"; exit 1; }
 # REV: the engine sits in the cart from 0; the Genesis plane's files from 0x080000
 ENGINE_SIZE=$(stat -c %s "$HERE/mars/OPENJAZZ.32X")
 [ "$ENGINE_SIZE" -le $((0x80000)) ] || { echo "*** the engine is $ENGINE_SIZE bytes: it would reach the Genesis plane's files at cart 0x080000 - stopping"; exit 1; }
 echo "==> ROM check";   python3 "$HERE/cd32x/ref/openlara/tools/prep_openlara_cd.py" "$HERE/mars/OPENJAZZ.32X" "$ROMS/OPENLARA.32X"
 echo "==> SH2 loader";  cd "$HERE/cd32x/sh2"    && make -f Makefile.cdloader clean && make -f Makefile.cdloader
-echo "==> Sub-CPU";     cd "$HERE/cd32x/subcpu" && make clean && make cd
+echo "==> Sub-CPU";     cd "$HERE/cd32x/subcpu" && make clean && make cd CART_DEFS="${CART:+-DCART_PAGED}"
 
 ISO="$HERE/cd32x/subcpu/CDROMPlayer.iso"
 [ -f "$ISO" ] || { echo "*** $ISO was not made - stopping"; exit 1; }

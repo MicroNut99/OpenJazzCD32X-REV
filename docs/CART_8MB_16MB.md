@@ -13,6 +13,65 @@ numbers in its `docs/CART_8MB_16MB.md`.
 in the first draft: page 0 overfull, CMD 46's fixed slots, the tile trim, the write path, the
 probe wording and others. All of them are fixed in this version.
 
+## R5: the 8 MB and 16 MB test builds (built, not yet run on a console)
+
+```
+cd /mnt/s/KoboPort/sega-toolchain-12.1/sega/OpenJazzCD32X-REV && \
+CART=16 bash tools/make_disc.sh
+```
+
+`CART=8` gives the 8 MB build. The discs go to `discs/R5-16MB/` and `discs/R5-8MB/` (`NAME=` still
+overrides that). Without `CART` the build is the 4 MB REV build, unchanged.
+
+**What the switch changes:**
+- **The engine** gets `OJ32X_CART_MB` (its objects go to `mars/obj_cart8` or `obj_cart16`).
+- **The Sub-CPU** gets `CART_PAGED`.
+- **The build** checks that the common pack fits page 0.
+
+**What the test builds do:**
+- **The common pack** sits at cart 0x080000, in page 0, so window 1 holds only packs.
+- **The board probe** runs at the first level load. It writes a marker into piece 15 of each
+  page, from page 7 down to page 1, then reads them back (section 4). The 8 MB build uses
+  pages 2-3 even on a 16 MB board.
+- **Each world pack and its Genesis plane pack** go into an extra page, one after the other.
+  The page's tail (piece 14) records them.
+- **A world already in the cart** is used again once three checks pass: its disc length, its
+  first and last 32 KB against the disc (CMD 47), and its checksum. Then there is no loading
+  screen. If the checks fail, the page is cleared.
+- **When no page has room,** the page used longest ago is cleared.
+- **On a 4 MB cart** (the probe finds no mapper) the world goes to the home slot at 0x200000,
+  with its Genesis pack right after it.
+- **Saves and the port settings** are read and written with page 1 mapped, then the level's
+  page is mapped back.
+
+**Stack changes (Sub-CPU only, in the paged build):**
+- **CMD 68** writes window 1's page. It is the shared proposal's variant B: the listener's
+  `chilly_rv_memcpy`, one even byte to `0xA130F2`.
+- **CMD 38 with COMM2 bit 15** takes the cart destination from COMM8.
+- **CMD 60** sets page 1 before it hands over.
+- **The common pack** (file 8) goes to slot 4.
+- **The 68000 listener does not change.**
+
+**Checked on the PC** (`make -C host CART=16`, then `T32X_CART_MB=4|8|16` for the modelled
+board and `T32X_CART_FILE=<file>` to keep the pages from one run to the next, like the battery):
+- **16 MB:** worlds 0-3 loaded into pages 2-4; world 0 then came from the cart in the next run.
+- **Frames:** levels played from a cached page gave pictures identical to the 4 MB build's,
+  pixel for pixel.
+- **8 MB:** pages 4-7 were found to mirror; the page used longest ago was cleared when the
+  cart was full.
+- **4 MB:** the probe found no mapper, and the home slot was used.
+- **A changed byte** in a cached world was caught by its checksum, and the world was loaded
+  again.
+- **The builds:** the full build passed for all three (CART=16, CART=8, none). The 4 MB build
+  has none of the new code.
+
+**Not tested on the PC:**
+- the save-area page switch (the PC keeps saves in files);
+- everything the board itself must show: the register write through the 32X, the probe on
+  real chips, the cache purge.
+
+The console test of the page register comes first.
+
 ## 1. The idea
 
 The cart keeps its content when the console is off (battery), so it already works as a disc

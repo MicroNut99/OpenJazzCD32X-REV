@@ -162,6 +162,21 @@ void print_diag(char *temp, const char *msg, int x, int y) {
 #define CMD_CHUNK_COMPARE 47       /* D32X M1c: CMD 46 without writing - is the chunk already in the cart? */
 #define CMD_CART_TO_FB    47             
 static int cur_img = 0;
+#ifdef CART_PAGED
+/* R5 (8 / 16 MB cart test builds, docs/CART_8MB_16MB.md): CMD 38 with COMM2 bit 15 takes the
+   cart destination from COMM8L (cur_dest, used by CMD 46 / 47 instead of cur_img's slot);
+   CMD 68 writes window 1's page register (the shared proposal, variant B: the listener's
+   chilly_rv_memcpy, one even byte to 0xA130F2 with RV = 1, no listener change). */
+static uint32_t cur_dest = 0xFFFFFFFFu;
+static void cart_page_write(int page)
+{
+    volatile uint8_t *wr = (volatile uint8_t *)0x0C0000;
+    wr[0] = (uint8_t)page;                         /* the byte, in Word RAM */
+    switch_banks();                                /* Word RAM -> 68000 (0x200000) */
+    do_md_cmd3(MD_CMD_CHILLY_RV_MEMCPY, 0xA130F2, 0x200000, 1);
+    switch_banks();
+}
+#endif
 
 /* OL-2: OpenLara levels.  CMD 38 with file number 100 + LevelID opens the level; CMD 46
    stores it at cart slot 16 (2 MB), where the SH2 reads it (0x02200000).  The ORDER must
@@ -639,6 +654,13 @@ int main(void)
         if (cmd == 38) { 
             int img_idx = do_md_cmd1(MD_CMD_READ_32X_16, 0xA15122);
             char img_name[24];
+#ifdef CART_PAGED
+            cur_dest = 0xFFFFFFFFu;
+            if (img_idx & 0x8000) {                     /* R5: destination given in COMM8L */
+                cur_dest = (uint32_t)do_md_cmd1(MD_CMD_READ_32X_32, 0xA15128) & 0x3FFFFCu;
+                img_idx &= 0x7FFF;
+            }
+#endif
             cur_img = img_idx < 0 ? 0 : img_idx;         
             /* KOBO M1: file number 16 = the Kobo graphics pack (tools/kobo_gfx.py).
                CMD 46 then stores it at cart offset 16 * CART_SLOT = 2 MB. */
@@ -658,6 +680,9 @@ int main(void)
             }
             else if (img_idx <= 0) strcpy(img_name, "IMAGE.RAW");
             else sprintf(img_name, "IMAGE%d.RAW", img_idx);
+#ifdef CART_PAGED
+            if (img_idx == 8) cur_img = 4;              /* R5: the common pack at 0x080000 (page 0) */
+#endif
 
             sprintf(tbuf, "OPENING %s...              ", img_name);
             print_diag(temp, tbuf, 2, 11);
@@ -695,6 +720,9 @@ int main(void)
             int off = chunk * 32768;
             int n = 0, bytes, p, k, bad = 0;
             uint32_t coff = CART_IMG_BASE + (uint32_t)cur_img * CART_SLOT + (uint32_t)off;
+#ifdef CART_PAGED
+            if (cur_dest != 0xFFFFFFFFu) coff = cur_dest + (uint32_t)off;
+#endif
 
             if (off < length) n = (length - off + 2047) / 2048;
             if (n > 16) n = 16;
@@ -812,6 +840,9 @@ int main(void)
             do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA15120, 0);
         }
         else if (cmd == 60) {
+#ifdef CART_PAGED
+            cart_page_write(1);                         /* R5: hand over with the reset mapping */
+#endif
             /* D32X M1: the ROM image is in the cart.  Acknowledge the SH2 FIRST (the 68K will be
                gone after this), then make the 68K jump to D32XR's Genesis code (0x880800 via the
                32X window).  send_md_cmd only (no wait: the 68K never comes back).  The Sub-CPU
@@ -925,6 +956,18 @@ int main(void)
             }
             do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA15120, 0);
         }
+#ifdef CART_PAGED
+        else if (cmd == 68) {
+            /* R5: cart page for window 1 (COMM2 = 1-7). Reply COMM12 = 1 done, 0 refused. */
+            int page = do_md_cmd1(MD_CMD_READ_32X_16, 0xA15122) & 0xFFFF;
+            int ok = page >= 1 && page <= 7;
+            if (ok) cart_page_write(page);
+            sprintf(tbuf, "CART PAGE %d %s              ", page, ok ? "SET" : "REFUSED");
+            print_diag(temp, tbuf, 2, 15);
+            do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA1512C, ok);
+            do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA15120, 0);
+        }
+#endif
         else if (cmd == 61) {
             /* OL-9: save area - the 4 KB buffer (filled with CMD 58) -> RAM cart at
                0x3F0000 + COMM2 * 4 KB.  The SH2 cannot write the cart; the 68000 can (RV method,

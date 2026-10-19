@@ -812,6 +812,151 @@ int32_t plat_load_pack(int id, uint32_t cart_offset, uint32_t max_bytes)
 	return (int32_t)len;
 }
 
+#if OJ32X_CART_MB
+/* ---- R5: the paged cart, modelled (port/plat.h, port/cartcache.c). T32X_CART_MB=4|8|16 is
+ * the board: 4 = no mapper (the page register write goes nowhere), 8 = U1 only (pages 4-7
+ * mirror 0-3), 16. Window 1's content (cart 0x200000-0x3EFFFF) is swapped with the page's
+ * backing store on a page change, so pointers into it stay valid, as on the console. The
+ * pieces at window 1 + 0x1F0000 (save area on page 1, tails on 2-7) have their own store. */
+#define HP_WIN   0x200000u
+#define HP_ROOM  0x1F0000u
+static int hp_now = 1, hp_board;
+static uint8_t *hp_store[8];
+static uint8_t hp_piece[8][16 * 4096];
+
+static int hp_model(void)
+{
+	if (!hp_board) {
+		const char *e = getenv("T32X_CART_MB");
+		hp_board = e && *e ? atoi(e) : OJ32X_CART_MB;
+		if (hp_board != 4 && hp_board != 8) hp_board = 16;
+		fprintf(stderr, "[host] cart: %d MB board\n", hp_board);
+	}
+	return hp_board;
+}
+static int hp_phys(int page) { return hp_model() == 4 ? 1 : hp_model() == 8 ? (page & 3) : page; }
+
+/* T32X_CART_FILE=<file>: the cart's pages kept from one run to the next (the battery) */
+static void hp_save(void)
+{
+	const char *path = getenv("T32X_CART_FILE");
+	if (!path || !*path || !cart_mem) return;
+	const int now = hp_phys(hp_now);
+	if (!hp_store[now]) hp_store[now] = __real_malloc(HP_ROOM);
+	memcpy(hp_store[now], cart_mem + (HP_WIN - PLAT_CART_DATA_OFFSET), HP_ROOM);
+	FILE *f = fopen(path, "wb");
+	if (!f) return;
+	for (int i = 0; i < 8; i++) {
+		const uint8_t has = hp_store[i] != NULL;
+		fwrite(&has, 1, 1, f);
+		if (has) fwrite(hp_store[i], 1, HP_ROOM, f);
+	}
+	fwrite(hp_piece, 1, sizeof hp_piece, f);
+	fclose(f);
+}
+static void hp_restore(void)
+{
+	static int done;
+	if (done) return;
+	done = 1;
+	atexit(hp_save);
+	const char *path = getenv("T32X_CART_FILE");
+	FILE *f = path && *path ? fopen(path, "rb") : NULL;
+	if (!f) return;
+	for (int i = 0; i < 8; i++) {
+		uint8_t has = 0;
+		if (fread(&has, 1, 1, f) != 1) break;
+		if (has) {
+			hp_store[i] = __real_malloc(HP_ROOM);
+			if (fread(hp_store[i], 1, HP_ROOM, f) != HP_ROOM) break;
+		}
+	}
+	if (fread(hp_piece, 1, sizeof hp_piece, f) != sizeof hp_piece) memset(hp_piece, 0, sizeof hp_piece);
+	fclose(f);
+	cart_map();
+	if (hp_store[1]) plat_cart_write(HP_WIN - PLAT_CART_DATA_OFFSET, hp_store[1], HP_ROOM);   /* page 1 after reset */
+	fprintf(stderr, "[host] cart pages restored from %s\n", path);
+}
+
+int plat_cart_page_now(void) { return hp_now; }
+
+int plat_cart_page(int page)
+{
+	hp_restore();
+	if (page < 1 || page > 7) return 0;
+	const int from = hp_phys(hp_now), to = hp_phys(page);
+	hp_now = page;
+	if (from == to) return 1;
+	cart_map();
+	uint8_t *win = cart_mem + (HP_WIN - PLAT_CART_DATA_OFFSET);
+	if (!hp_store[from]) hp_store[from] = __real_malloc(HP_ROOM);
+	if (!hp_store[to]) { hp_store[to] = __real_malloc(HP_ROOM); memset(hp_store[to], 0xFF, HP_ROOM); }
+	memcpy(hp_store[from], win, HP_ROOM);
+	plat_cart_write(HP_WIN - PLAT_CART_DATA_OFFSET, hp_store[to], HP_ROOM);
+	return 1;
+}
+
+static long hp_file(int id, uint8_t **data)
+{
+	const char *dir = getenv("T32X_PACK_DIR");
+	if (!dir || !*dir) return -1;
+	char path[1024];
+	if (id >= PACK_GENESIS_ID0) snprintf(path, sizeof path, "%s/GB%03d.PAK", dir, id - PACK_GENESIS_ID0);
+	else snprintf(path, sizeof path, "%s/OJ%03d.PAK", dir, id - PACK_LEVEL_ID0);
+	FILE *f = fopen(path, "rb");
+	if (!f) return -1;
+	fseek(f, 0, SEEK_END);
+	long len = ftell(f);
+	if (data) {
+		fseek(f, 0, SEEK_SET);
+		*data = __real_malloc((size_t)len);
+		if (fread(*data, 1, (size_t)len, f) != (size_t)len) len = -1;
+	}
+	fclose(f);
+	return len;
+}
+
+int32_t plat_pack_open(int id) { return (int32_t)hp_file(id, NULL); }
+
+int32_t plat_load_pack_at(int id, uint32_t cart_offset, uint32_t max_bytes)
+{
+	return plat_load_pack(id, cart_offset, max_bytes);
+}
+
+int plat_pack_same_as_disc(int id, uint32_t cart_offset, uint32_t len)
+{
+	uint8_t *d = NULL;
+	const long l = hp_file(id, &d);
+	int same = l == (long)len;
+	if (same) {
+		const uint8_t *c = plat_cart_ptr(cart_offset);
+		const uint32_t chunks = (len + 32767) >> 15, last = (chunks - 1) << 15;
+		const uint32_t n0 = len < 32768 ? len : 32768, n1 = len - last;
+		same = memcmp(c, d, n0) == 0 && memcmp(c + last, d + last, n1) == 0;
+	}
+	if (d) __real_free(d);
+	return same;
+}
+
+int plat_cart_piece_write(int piece, const uint16_t *words, int n)
+{
+	hp_restore();
+	uint8_t *p = hp_piece[hp_phys(hp_now)] + (piece & 15) * 4096;
+	for (int i = 0; i < n && i < 2048; i++) { p[2 * i] = (uint8_t)(words[i] >> 8); p[2 * i + 1] = (uint8_t)words[i]; }
+	return 1;
+}
+
+void plat_cart_piece_read(int piece, uint16_t *words, int n)
+{
+	hp_restore();
+	const uint8_t *p = hp_piece[hp_phys(hp_now)] + (piece & 15) * 4096;
+	for (int i = 0; i < n && i < 2048; i++) words[i] = (uint16_t)(p[2 * i] << 8 | p[2 * i + 1]);
+}
+
+void plat_save_area_enter(void) { }
+void plat_save_area_leave(void) { }
+#endif
+
 /* T32X_PACK=<file>: the pack goes into the cart (like command 46 on the 32X) and is
  * mounted; the cart allocator gets the space after it */
 /* game files can be opened before plat_init (configuration, PANEL.000): the pack is

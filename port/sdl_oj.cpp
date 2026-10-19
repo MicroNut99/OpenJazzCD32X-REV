@@ -24,6 +24,7 @@ extern "C" {
 #include "cart.h"
 #include "pack.h"
 #include "genbg.h"
+#include "cartcache.h"
 }
 
 #include <stdlib.h>
@@ -1006,6 +1007,33 @@ void oj32x_level_pack(const char *levelFile)
 		plat_log(msg);
 	}
 	pack_mount_at(2, nullptr);   /* REV: the last world's Genesis plane files are gone */
+#if OJ32X_CART_MB
+	/* R5: the 8 / 16 MB cart keeps worlds in cache pages (port/cartcache.c); on a 4 MB cart,
+	 * the home slot at 0x200000 with the Genesis plane pack right after the world pack */
+	{
+		uint32_t woff, goff;
+		pack_mount_at(1, nullptr);
+		const int gb_id = k < PACK_BONUS_K ? PACK_GENESIS_ID0 + k : 0;
+		if (cartcache_world(PACK_LEVEL_ID0 + k, gb_id, &woff, &goff)) {
+			if (pack_mount_at(1, plat_cart_ptr(woff))) {
+				current = k;
+				if (goff) pack_mount_at(2, plat_cart_ptr(goff));
+				return;
+			}
+		}
+		if (plat_cart_page_now() != 1) plat_cart_page(1);
+		const int32_t len = plat_load_pack_at(PACK_LEVEL_ID0 + k, PACK_LEVEL_CART, PACK_LEVEL_MAX);
+		if (len > 0 && pack_mount_at(1, plat_cart_ptr(PACK_LEVEL_CART))) {
+			current = k;
+			const uint32_t g = (PACK_LEVEL_CART + (uint32_t)len + 3) & ~3u;
+			if (gb_id && plat_load_pack_at(gb_id, g, PACK_LEVEL_CART + PACK_LEVEL_MAX - g) > 0)
+				pack_mount_at(2, plat_cart_ptr(g));
+		} else {
+			current = -1;
+		}
+		return;
+	}
+#endif
 	const int32_t len = plat_load_pack(PACK_LEVEL_ID0 + k, PACK_LEVEL_CART, PACK_LEVEL_MAX);
 	if (len > 0 && pack_mount_at(1, plat_cart_ptr(PACK_LEVEL_CART))) {
 		current = k;

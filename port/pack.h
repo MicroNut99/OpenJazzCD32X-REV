@@ -50,8 +50,16 @@ extern "C" {
  * PACK_LEVEL_ID0 + k; copied to cart PACK_LEVEL_CART (slot 20). The common pack (cart
  * 0x100000) must therefore end before 0x280000 (1.5 MB) - the build checks both sizes. */
 #define PACK_LEVEL_ID0   200
+#if OJ32X_CART_MB
+/* R5, the 8 / 16 MB cart test builds (docs/CART_8MB_16MB.md): the common pack at 0x080000
+ * (page 0), so window 1 (0x200000-0x3FFFFF) holds only packs: the home slot (page 1) or a
+ * cached page 2-7. A world's Genesis plane pack follows its world pack in the same page. */
+#define PACK_LEVEL_CART  0x200000u
+#define PACK_LEVEL_MAX   0x1F0000u   /* up to 0x3F0000 (page 1: the save area; 2-7: the tail) */
+#else
 #define PACK_LEVEL_CART  0x280000u
 #define PACK_LEVEL_MAX   0x170000u   /* up to 0x3F0000, where saves begin */
+#endif
 #define PACK_BONUS_K     800         /* OJ<800 + n>.PAK = bonus level BONUSMAP.n */
 /* REV: the Genesis plane's files of a world (tools/genesis_pack.py): disc file GB<k>.PAK (k as
  * the world pack's), command 38 file number PACK_GENESIS_ID0 + k, cart 0x080000 (free up to

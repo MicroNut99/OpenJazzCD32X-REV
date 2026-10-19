@@ -56,3 +56,6 @@ liblto_plugin.so
 music_copy_done.txt
 copy_log.txt
 _transfer/
+mars/obj_cart*/
+host/obj_*/
+host/openjazz32x_host_*

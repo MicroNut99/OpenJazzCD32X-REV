@@ -74,6 +74,16 @@ int plat_save_put_word(int index, int value);     /* plat_mars.c: CMD 58 */
 int plat_save_piece(int piece);                   /* plat_mars.c: CMD 61 */
 int plat_game(void);
 #define SAVE_AREA ((const volatile uint8_t *)0x223F0000u)   /* cart 0x3F0000, cache-through */
+#if OJ32X_CART_MB
+/* R5: the save area is page 1's; a level's world may be in another page (port/cartcache.c) */
+void plat_save_area_enter(void);
+void plat_save_area_leave(void);
+#define SAVE_AREA_ENTER() plat_save_area_enter()
+#define SAVE_AREA_LEAVE() plat_save_area_leave()
+#else
+#define SAVE_AREA_ENTER() ((void)0)
+#define SAVE_AREA_LEAVE() ((void)0)
+#endif
 
 typedef struct { int piece; int pos; int size; int writing; int open; int odd; uint8_t pending; } SaveFd;
 static SaveFd fds[4];
@@ -116,7 +126,11 @@ static int piece_size(int piece, const char *path)
 static int store_find(const char *path)
 {
 	int piece = piece_of(path);
-	return piece >= 0 && piece_size(piece, path) >= 0 ? piece : -1;
+	if (piece < 0) return -1;
+	SAVE_AREA_ENTER();
+	const int size = piece_size(piece, path);
+	SAVE_AREA_LEAVE();
+	return size >= 0 ? piece : -1;
 }
 
 /* the Sub-CPU buffer is filled byte pairs at a time: the data starts at byte 18 (even) */
@@ -148,7 +162,9 @@ int _open(const char *name, int flags, int mode)
 	}
 	else
 	{
+		SAVE_AREA_ENTER();
 		const int size = piece_size(piece, name);
+		SAVE_AREA_LEAVE();
 		if (size < 0) { errno = ENOENT; return -1; }
 		fds[slot].size = size;
 	}
@@ -175,7 +191,9 @@ int _read(int fd, char *buf, int len)
 	if (n > len) n = len;
 	if (n < 0) n = 0;
 	const volatile uint8_t *p = piece_at(d->piece) + PIECE_HEAD + d->pos;
+	SAVE_AREA_ENTER();
 	for (int i = 0; i < n; i++) buf[i] = (char)p[i];
+	SAVE_AREA_LEAVE();
 	d->pos += n;
 	return n;
 }
