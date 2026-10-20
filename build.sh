@@ -23,6 +23,10 @@ mkdir -p "$ROMS"
 CART="${CART:-}"
 case "$CART" in ""|8|16) ;; *) echo "*** CART must be 8 or 16 (or unset) - stopping"; exit 1;; esac
 [ -n "$CART" ] && echo "==> cart: the $CART MB test build"
+# PROF=1: the frame profiler box in levels (ms per frame: logic, background, sprites, foreground,
+# panel, present, other) - for measuring on the console
+PROF="${PROF:-}"
+[ -n "$PROF" ] && echo "==> the frame profiler box is on"
 
 grep -q '^#define CDL_TARGET_OPENLARA 1' "$HERE/cd32x/sh2/cdloader_sh2.c" \
   || { echo "*** cd32x/sh2/cdloader_sh2.c is not in OpenLara mode - stopping"; exit 1; }
@@ -111,7 +115,7 @@ rm -f "$HERE"/mars/obj*/port/plat_mars.o "$HERE"/mars/obj*/port/plat_mars.d   # 
 # R5: the 4 MB and the CART builds keep their own objects: link the engine again every time
 rm -f "$HERE/mars/openjazz32x.elf" "$HERE/mars/openjazz32x.bin" "$HERE/mars/OPENJAZZ.32X"
 python3 "$HERE/tools/music_lengths.py" "$HERE/tools/music_tracks.txt" "$HERE/music" "$HERE/port/music_lengths.h"   # CD player
-echo "==> engine";      make -C "$HERE/mars" EXTRA_DEFS="$MUSIC_DEFS" CART="$CART"
+echo "==> engine";      make -C "$HERE/mars" EXTRA_DEFS="$MUSIC_DEFS" CART="$CART" PROF="$PROF"
 [ -f "$HERE/mars/OPENJAZZ.32X" ] || { echo "*** mars/OPENJAZZ.32X was not made - stopping"; exit 1; }
 # REV: the engine sits in the cart from 0; the Genesis plane's files from 0x080000
 ENGINE_SIZE=$(stat -c %s "$HERE/mars/OPENJAZZ.32X")
