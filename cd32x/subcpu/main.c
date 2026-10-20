@@ -166,14 +166,15 @@ static int cur_img = 0;
 /* R5 (8 / 16 MB cart test builds, docs/CART_8MB_16MB.md): CMD 38 with COMM2 bit 15 takes the
    cart destination from COMM8L (cur_dest, used by CMD 46 / 47 instead of cur_img's slot);
    CMD 68 writes window 1's page register (the shared proposal, variant B: the listener's
-   chilly_rv_memcpy, one even byte to 0xA130F2 with RV = 1, no listener change). */
+   safe_cart_xfer (routine 26: interrupts off, RV = 1), one even byte to 0xA130F2, as the ledger's
+   section 7 registers it - no listener change). */
 static uint32_t cur_dest = 0xFFFFFFFFu;
 static void cart_page_write(int page)
 {
     volatile uint8_t *wr = (volatile uint8_t *)0x0C0000;
     wr[0] = (uint8_t)page;                         /* the byte, in Word RAM */
     switch_banks();                                /* Word RAM -> 68000 (0x200000) */
-    do_md_cmd3(MD_CMD_CHILLY_RV_MEMCPY, 0xA130F2, 0x200000, 1);
+    do_md_cmd3(MD_CMD_SAFE_CART_XFER, 0x200000, 0xA130F2, 1);   /* ledger section 7: routine 26 (interrupts off, RV = 1) */
     switch_banks();
 }
 #endif
