@@ -110,6 +110,8 @@ fi
 rm -rf "$GB_DUMPS"
 # music - WAVs in music/ (named like the game's music files, tools/music_tracks.txt)
 MUSIC_WAVS=$(ls "$HERE"/music/*.wav "$HERE"/music/*.WAV 2>/dev/null | wc -l)
+# NOMUSIC=1: a disc without the music (one silent audio track, the engine plays none) - small, for emulators
+[ -n "${NOMUSIC:-}" ] && MUSIC_WAVS=0
 if [ "$MUSIC_WAVS" -gt 0 ]; then MUSIC_DEFS="-DOJ32X_MUSIC=1"; else MUSIC_DEFS=""; fi
 rm -f "$HERE"/mars/obj*/port/plat_mars.o "$HERE"/mars/obj*/port/plat_mars.d   # the switch lives there
 # R5: the 4 MB and the CART builds keep their own objects: link the engine again every time

@@ -13,6 +13,7 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 # WSL sets NAME to the computer's name in every shell: that NAME is not a build name
 [ "${NAME:-}" = "$(hostname)" ] && NAME=""
 if [ -n "${CART:-}" ]; then NAME="${NAME:-R5-${CART}MB}"; export CART; fi
+[ -n "${NOMUSIC:-}" ] && export NOMUSIC
 # PROF=1: the frame profiler box in levels; the name gets -PROF
 if [ -n "${PROF:-}" ]; then export PROF; NAME="${NAME:-R5${CART:+-${CART}MB}}-PROF"; fi
 NAME="${NAME:-R1}"
@@ -35,7 +36,8 @@ if ! ls "$ROMS"/OJ0*.PAK >/dev/null 2>&1 && [ -d ../OpenJazzCD32X/cd32x/subcpu/R
 fi
 
 # the music: the WAVs from ../OpenJazzCD32X/music when this folder does not have them all
-if [ -d ../OpenJazzCD32X/music ]; then
+# NOMUSIC=1: no music on the disc (build.sh), the WAVs are not needed
+if [ -z "${NOMUSIC:-}" ] && [ -d ../OpenJazzCD32X/music ]; then
   mkdir -p music
   for f in ../OpenJazzCD32X/music/*.wav ../OpenJazzCD32X/music/*.WAV; do
     [ -f "$f" ] || continue
