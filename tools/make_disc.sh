@@ -13,8 +13,6 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 # WSL sets NAME to the computer's name in every shell: that NAME is not a build name
 [ "${NAME:-}" = "$(hostname)" ] && NAME=""
 if [ -n "${CART:-}" ]; then NAME="${NAME:-R5-${CART}MB}"; export CART; fi
-# PROF=1: the frame profiler box in levels; the name gets -PROF
-if [ -n "${PROF:-}" ]; then export PROF; NAME="${NAME:-R5${CART:+-${CART}MB}}-PROF"; fi
 NAME="${NAME:-R1}"
 DISCS="$HERE/discs/$NAME"
 
