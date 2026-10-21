@@ -1,5 +1,7 @@
 # R8: compressed packs in the 8 / 16 MB cart (21 Oct 2026)
 
+**R11: off by default.** `LZ=1 CART=16 bash tools/make_disc.sh` builds it (disc name `R11-16MB-LZ`).
+
 Measured in ares (MicroNut99/ares_android, branch `cd32x-bus-jh`, `ARES_32X_TIMING=console`),
 not on the console. R8 = R7 + this. The 4 MB build is unchanged.
 
