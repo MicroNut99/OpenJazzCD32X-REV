@@ -84,6 +84,8 @@ class JJ1BonusLevel : public Level {
 		const unsigned char* mapEvents;
 		bool tilesMapped, eventsMapped;
 		unsigned char clearedEvents[BLW * BLH / 8];
+		int mdHole; ///< R9: the floor is the Genesis's (the 32X fills its area with this index), -1: the 32X's
+		class RotatePaletteEffect* mdRot; ///< R9: the track sides' rotation (its step picks the floor's stamps)
 	public:
 		unsigned char tileAt (int y, int x) const { unsigned char t = mapTiles[(y << 8) + x]; return t > 59 ? 59 : t; }
 		unsigned char eventAt (int y, int x) const {

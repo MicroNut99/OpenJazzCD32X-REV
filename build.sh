@@ -108,6 +108,9 @@ if [ -f "$HH95/PANEL.000" ]; then
   python3 "$HERE/tools/genesis_pack.py" "$GB_DUMPS/hh95" "$ROMS" 100
 fi
 rm -rf "$GB_DUMPS"
+# R9: the bonus levels' floor for the Sega CD's graphics chip, GB800-GB829 (docs/R9_BONUS_FLOOR.md)
+echo "==> bonus floors (tools/bonus_md/make_bonus_md.py)"
+python3 "$HERE/tools/bonus_md/make_bonus_md.py" "$DATA" "$ROMS"
 # R8: the 8 / 16 MB builds keep compressed copies of the world, bonus and Genesis plane packs
 # in the cart (docs/R8_COMPRESSED_PACKS.md): OZ<k>.PAK / GZ<k>.PAK beside them on the disc
 rm -f "$ROMS"/OZ*.PAK "$ROMS"/GZ*.PAK

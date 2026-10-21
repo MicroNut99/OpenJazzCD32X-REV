@@ -138,6 +138,13 @@ shows "COPYING TO THE CART - START: SKIP"; Start stops the copying. A world in t
 about 6 seconds (3 of them unpacking); a world not in the cart loads from the disc in about 13
 seconds and is then kept in the cart. Details: `docs/R8_COMPRESSED_PACKS.md`.
 
+### Bonus levels: the Sega CD draws the floor (R9)
+
+The bonus levels' rotating floor is drawn by the Mega CD's rotation / scaling chip and shown by
+the Genesis; the 32X draws only the sky, the horizon, the sprites and the panel. They run at 30
+pictures a second (20 on six maps that need two layers for their colours), where the 32X alone
+managed 2-3. Details: `docs/R9_BONUS_FLOOR.md`.
+
 
 ## Controls
 

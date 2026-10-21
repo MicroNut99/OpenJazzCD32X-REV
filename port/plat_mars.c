@@ -32,6 +32,9 @@
 #include "mars/font3x5.h"
 
 static int loading_up;     /* the loading screen is on: a second pack of the same load keeps it */
+static int bmd_hole = -1;  /* R9: the bonus floor's 32X palette index (-1: no floor) */
+static uint16_t bmd_hole555;
+static int bmd_show = -1;  /* R9: the floor bit the next swap shows (it changes with each new floor) */
 static int fill_running;   /* FILL: the boot's copying shows the splash, not the loading screen */
 
 /* ------------------------------------------------------------ registers */
@@ -282,8 +285,10 @@ static void comm_pause(void)
 	bus_rest(128);  /* R7: was a volatile counter on the stack: a write to SDRAM every turn */
 }
 
+static void bmd_collect(void);
 static int send_cmd(uint16_t cmd, uint32_t tries)
 {
+	bmd_collect();          /* R9: a bonus floor sent ahead must be answered first */
 	pad_collect(40000UL);   /* R7: a pad request sent ahead must be answered first */
 	MARS_COMM0 = cmd;
 	for (uint32_t n = 0; n < tries && MARS_COMM0 != 0; n++)
@@ -856,11 +861,22 @@ static void present_finish(volatile uint32_t *blank_line, const uint16_t *palett
 {
 	for (int x = 0; x < PLAT_SCREEN_W / 4; ++x)
 		blank_line[x] = border_fill;
+	bmd_collect();                           /* R9: the floor drawn while this picture was */
 	pad_ask();                               /* R7: answered while this SH2 waits below */
 	pace_before_flip();
+	if (bmd_show >= 0)                       /* R9: the 68000 copies a new floor at the swap */
+		MARS_COMM6 = (uint16_t)(0x4000 | bmd_show);
 	flip_wait();
 	last_flip_vblank = vblank_count;
 	while ((VDP_FBCTL & FBCTL_PEN) == 0) bus_rest(8);
+	if (bmd_hole >= 0) {
+		/* R9: every colour in front of the Genesis but the floor's area (its colour: the
+		 * floor's pixel value 0, which the Genesis leaves see-through) */
+		for (int i = 0; i < 256; ++i)
+			VDP_CRAM[i] = (uint16_t)((palette555[i] ? palette555[i] : 0x0400) | 0x8000);
+		VDP_CRAM[bmd_hole] = bmd_hole555;
+		return;
+	}
 	for (int i = 0; i < 256; ++i)
 		/* 0x0000 is see-through on the 32X ([BOOT] rule 5): black in the game's own
 		 * palettes let the Genesis layer show. Black is written as 0x0400 instead. */
@@ -1509,6 +1525,82 @@ int plat_genbg(int op, uint32_t arg)
 	MARS_COMM12 = 0;
 	if (!send_cmd(CMD_GENBG, 4000000UL)) { plat_log("GENBG: COMMAND TIMED OUT"); return -1; }
 	return MARS_COMM12;
+}
+
+/* ---- R9: the bonus level's floor (Sub-CPU command 71, cd32x/subcpu/main.c bmd_load /
+ * bmd_frame, docs/R9_BONUS_FLOOR.md) */
+#define CMD_BMD 71
+static uint32_t bmd_file;                /* the file's cart offset: loaded again if the Sub-CPU
+                                            gave Word RAM back to 1M mode for another command */
+static int bmd_send_load(void)
+{
+	MARS_COMM2 = 1;
+	MARS_COMM8_32 = bmd_file;
+	MARS_COMM12 = 0;
+	if (!send_cmd(CMD_BMD, 8000000UL)) { plat_log("BONUS FLOOR: LOAD TIMED OUT"); return 0; }
+	return MARS_COMM12 == 1;
+}
+
+int plat_bonusmd_load(const void *file, int hole, uint16_t hole555)
+{
+	bmd_file = plat_cart_offset_of(file);
+	bmd_show = -1;
+	if (!bmd_send_load()) { plat_bonusmd_off(); return 0; }
+	bmd_hole = hole & 255;
+	bmd_hole555 = hole555;
+	return 1;
+}
+
+/* the frame's floor goes out at the start of the frame and is answered while the SH2 draws
+ * the rest; the answer (the buffer) is collected before the swap (present_finish) or before any
+ * other command (send_cmd) */
+static int bmd_asked, bmd_reload;
+
+static void bmd_collect(void)
+{
+	if (!bmd_asked) return;
+	bmd_asked = 0;
+	for (uint32_t n = 0; n < 4000000UL && MARS_COMM0 != 0; n++)
+		comm_pause();
+	if (MARS_COMM0 != 0) { plat_log("BONUS FLOOR: FRAME TIMED OUT"); bmd_reload = 1; return; }
+	const uint16_t r = MARS_COMM12;
+	if (r == 1) bmd_show = bmd_show == 1 ? 0 : 1;   /* a new floor: the bit changes */
+	else bmd_reload = 1;                 /* 0xFFFF: Word RAM went back to 1M - load again */
+}
+
+int plat_bonusmd_frame(int32_t x, int32_t y, int cs, int sn, int step)
+{
+	if (bmd_hole < 0) return 0;
+	bmd_collect();
+	pad_collect(40000UL);
+	if (bmd_reload) {
+		bmd_reload = 0;
+		if (!bmd_send_load()) {
+			plat_log("BONUS FLOOR: LOST - THE 32X DRAWS IT");
+			plat_bonusmd_off();          /* the Genesis display off: the 32X's colours lose bit 15 */
+			return 0;
+		}
+	}
+	MARS_COMM2 = (uint16_t)(2 | (step & 15) << 8);
+	MARS_COMM8_32 = (uint32_t)((x >> 7) & 0xFFFF) << 16 | (uint32_t)((y >> 7) & 0xFFFF);
+	MARS_COMM4 = (uint16_t)cs;
+	MARS_COMM12 = (uint16_t)sn;
+	MARS_COMM0 = CMD_BMD;
+	bmd_asked = 1;
+	return 1;
+}
+
+void plat_bonusmd_off(void)
+{
+	if (!bmd_file) return;
+	bmd_collect();
+	bmd_reload = 0;
+	MARS_COMM2 = 3;
+	send_cmd(CMD_BMD, 4000000UL);
+	bmd_file = 0;
+	bmd_hole = -1;
+	bmd_show = -1;
+	MARS_COMM6 = 0;
 }
 
 uint32_t plat_cart_offset_of(const void *p)

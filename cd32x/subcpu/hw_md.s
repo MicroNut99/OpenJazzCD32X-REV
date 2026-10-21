@@ -24,8 +24,9 @@
         .equ    MD_CMD_COPY_FROM_CART, 24
         .equ    MD_CMD_COPY_WORDS, 25
         .equ    MD_CMD_SAFE_CART_XFER, 26
-        .equ    MD_CMD_END, 42              /* KOBO K19: + set_vdp_reg (34); D32X M1: + start_d32xr (35);
-                                               ledger: set_vsram (36); REV: genbg_* (37-40) */
+        .equ    MD_CMD_END, 46              /* KOBO K19: + set_vdp_reg (34); D32X M1: + start_d32xr (35);
+                                               ledger: set_vsram (36); REV: genbg_* (37-40);
+                                               R7: rv_copy_fast (41); R9: bmd_* (42-45) */
 
 
         .text
@@ -189,6 +190,8 @@ md_init_start:
 
         .align  4
 md_start:
+        clr.l   0xFF7FF0                /* R9: the bonus floor's variables (bonusmd_md.s BM_V): off */
+        clr.l   0xFF7FF4
         move.l  #0,0xA12010
         move.l  #0,0xA12014
         move.l  #0,0xA12018
@@ -309,6 +312,10 @@ cmd_table:
         .word   genbg_off - cmd_table           /* 39  REV: off */
         .word   genbg_cell - cmd_table          /* 40  REV: a tile of the map changed */
         .word   rv_copy_fast - cmd_table        /* 41  R7: cart <-> Word RAM, 48 bytes a movem (RV = 1) */
+        .word   bmd_setup - cmd_table           /* 42  R9: bonus floor - the VDP set up */
+        .word   bmd_queue - cmd_table           /* 43  R9: bonus floor - a picture for the next vblank */
+        .word   bmd_off - cmd_table             /* 44  R9: bonus floor - off */
+        .word   cmd_nop - cmd_table             /* 45  R9: (free) */
 
 | D32X M1: void start_d32xr(void) - never returns.
 | D32XR's ROM is in the RAM cart.  Interrupts off, cart bank 0, RV off (the SH2 must reach the
@@ -1315,6 +1322,7 @@ message6:
 vblank_int:
         movem.l d0-d1/a0-a1,-(sp)
         bsr.w   genbg_vblank            /* REV: Genesis plane - scroll, colours, new cells */
+        bsr.w   bmd_vblank              /* R9: bonus floor - the buffer the SH2 shows */
 
         pea     0.w
         bsr.w   get_pad
@@ -1489,6 +1497,7 @@ exc_buf:
         .space  48
 
         .include "genbg_md.s"
+        .include "bonusmd_md.s"
 
         .align  4
 | R7: void rv_copy_fast(src, dst, len) - as safe_cart_xfer_w (routine 27: interrupts off,

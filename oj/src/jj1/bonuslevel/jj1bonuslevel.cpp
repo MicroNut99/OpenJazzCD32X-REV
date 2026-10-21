@@ -224,6 +224,14 @@ JJ1BonusLevel::JJ1BonusLevel (Game* owner, char * fileName, bool multi) : Level(
 	int count, x, y;
 
 #ifdef OJ32X
+	mdHole = -1;
+	mdRot = NULL;
+#if defined(OJ32X_MARS) && defined(OJ32X_BMD_TEST_MAP)
+	// test build: every bonus level is BONUSMAP.<OJ32X_BMD_TEST_MAP>
+	char bonusTest[16];
+	snprintf(bonusTest, sizeof bonusTest, "BONUSMAP.%03d", OJ32X_BMD_TEST_MAP);
+	fileName = bonusTest;
+#endif
 #ifndef OJ32X_MARS
 	// PORT32X (PC build, baking): T32X_BONUS_MAP=n plays BONUSMAP.n whichever bonus level
 	// the menu starts - tools/bake_bonus.sh uses it to make one pack per bonus map
@@ -460,6 +468,9 @@ JJ1BonusLevel::JJ1BonusLevel (Game* owner, char * fileName, bool multi) : Level(
 
 	// Track sides
 	paletteEffects = new RotatePaletteEffect(192, 16, F32, paletteEffects);
+#ifdef OJ32X
+	mdRot = static_cast<RotatePaletteEffect*>(paletteEffects);
+#endif
 
 	// Bouncy things
 	paletteEffects = new RotatePaletteEffect(240, 16, F32, paletteEffects);
@@ -467,6 +478,12 @@ JJ1BonusLevel::JJ1BonusLevel (Game* owner, char * fileName, bool multi) : Level(
 
 	// Adjust panelBigFont to use bonus level palette
 	panelBigFont->mapPalette(0, 32, 15, -16);
+
+#ifdef OJ32X
+	// PORT32X R9: the floor on the Sega CD's graphics chip and a Genesis plane, if this bonus
+	// map's Genesis pack has it (docs/R9_BONUS_FLOOR.md); the 32X draws the rest
+	mdHole = oj32x_bonusmd_start();
+#endif
 
 
 	multiplayer = multi;
@@ -487,6 +504,7 @@ JJ1BonusLevel::~JJ1BonusLevel () {
 	video.destroySurface(tileSet);
 	video.destroySurface(background);
 #ifdef OJ32X
+	oj32x_bonusmd_stop();
 	if (!tilesMapped) delete[] const_cast<unsigned char*>(mapTiles);
 	if (!eventsMapped) delete[] const_cast<unsigned char*>(mapEvents);
 #endif
@@ -704,6 +722,22 @@ void JJ1BonusLevel::draw () {
 	SDL_Rect dst;
 	int x, y;
 
+#ifdef OJ32X
+	// PORT32X R9: the floor goes to the graphics chip first, so it is drawn while the 32X
+	// draws the rest of the picture (docs/R9_BONUS_FLOOR.md)
+#ifdef OJ32X_BMD_CHECK
+	// test build: from the 700th frame on, the 32X draws the floor again (the same view twice)
+	static int checkFrames;
+	if (mdHole >= 0 && ++checkFrames == 700) { oj32x_bonusmd_stop(); mdHole = -1; }
+#endif
+	bool mdFloor = false;
+	if (mdHole >= 0 && mdRot) {
+		JJ1BonusLevelPlayer *p = localPlayer->getJJ1BonusLevelPlayer();
+		mdFloor = oj32x_bonusmd_frame(p->getX(), p->getY(), fCos(direction), fSin(direction), mdRot->step());
+		if (!mdFloor) mdHole = -1;
+	}
+#endif
+
 	// Draw the background
 
 	for (x = -(direction & 1023); x < canvasW; x += background->w) {
@@ -733,6 +767,13 @@ void JJ1BonusLevel::draw () {
 	fixed playerSin = fSin(direction);
 	fixed playerCos = fCos(direction);
 
+#ifdef OJ32X
+	// PORT32X R9: the floor is the graphics chip's (sent above, shown with this picture); the
+	// 32X leaves its area in the hole colour, through which the Genesis planes show
+	if (mdFloor) {
+		video.drawRect(0, canvasH - ((canvasH >> 1) - 15), canvasW, (canvasH >> 1) - 15, mdHole);
+	} else {
+#endif
 	if (SDL_MUSTLOCK(canvas)) SDL_LockSurface(canvas);
 
 	for (y = 1; y <= (canvasH >> 1) - 15; y++) {
@@ -764,6 +805,9 @@ void JJ1BonusLevel::draw () {
 	}
 
 	if (SDL_MUSTLOCK(canvas)) SDL_UnlockSurface(canvas);
+#ifdef OJ32X
+	}
+#endif
 
 
 	// Draw nearby events

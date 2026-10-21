@@ -464,6 +464,7 @@ void md_service(void)
 }
 static void md_drain(void) { while (md_busy || md_qh != md_qt) md_service(); }
 static void md_page(int page) { md_push(MD_CMD_SAFE_CART_XFER, 0xA1202C, 0xA130F2, 1, page << 24); }
+
 static void md_copy(uint32_t src, uint32_t dst, uint32_t len)   /* 16 KB per command */
 {
     for (uint32_t p = 0; p < len; p += 0x4000)
@@ -526,6 +527,178 @@ static uint32_t unpack_pack(int spage, int dpage, uint32_t src, uint32_t dst)
     return raw;
 }
 #endif
+
+/* ---- R9: the bonus level's floor on the graphics chip (docs/R9_BONUS_FLOOR.md) ----------
+ * CMD 71, COMM2 = op | step << 8:
+ *   1 LOAD  COMM8 = cart offset of BONUSMD.BIN (tools/bonus_md/make_bonus_md.py): Word RAM to
+ *           2M, the stamps, the map and the header copied in by the 68000, the VDP set up.
+ *           Reply COMM12 = 1 (0: not a BONUSMD v2 file).
+ *   2 FRAME COMM8 = x << 16 | y (13.3 pixels, the player), COMM4 = cos, COMM12 = sin (10-bit
+ *           fractions as OpenJazz's fCos / fSin), step = the colour rotation's position (0-15).
+ *           The layer(s) drawn (the file says 1 or 2), queued for the 68000's next vblank; reply COMM12 = 1, or 0xFFFF
+ *           when the floor is not loaded (another command needed Word RAM: LOAD again).
+ *   3 OFF   back to 1M, the Genesis display off.
+ * Word RAM in 2M mode (Sub-CPU 0x080000, 68000 0x200000): */
+#define BMD_WR      0x080000
+#define BMD_MAP_A   0x28000      /* the chip's stamp maps: 8 x 8 stamps (256 x 256 pixels, */
+#define BMD_MAP_B   0x28080      /* repeated) around the part of the floor the view shows */
+#define BMD_IMG_A   0x30000      /* plane A's picture: 40 x 11 cells, columns of 11 */
+#define BMD_IMG_B   0x34000      /* plane B's */
+#define BMD_TRACE   0x38000      /* 85 lines x (x, y, dx, dy) */
+#define BMD_HEAD    0x3A000      /* the file's first 1024 bytes */
+#define BMD_GRIDTMP 0x28000      /* the map (64 KB) on its way into bmd_grid (load only) */
+#define BMD_ROWS    85
+#define MD_CMD_BMD_SETUP 42
+#define MD_CMD_BMD_QUEUE 43
+#define MD_CMD_BMD_OFF   44
+static int bmd_on;
+static uint8_t bmd_mode1m;                 /* 0xFF8003 before (1M mode, its bank) */
+static uint16_t bmd_tstamp[2][60], bmd_tanim[2][60];
+static int bmd_nphase;
+static int bmd_layers;                     /* 1: plane A only (16 colours), 2: A and B (31) */
+static int32_t bmd_dist[BMD_ROWS];         /* image line i: OpenJazz's distance for y = 85 - i */
+static int16_t bmd_k[BMD_ROWS];            /* distance / 5: step = k * cos >> 15 */
+static uint8_t bmd_grid[65536];            /* the bonus map's tiles */
+#define WR8(o)  (*(volatile uint8_t *)(BMD_WR + (o)))
+#define WR16(o) (*(volatile uint16_t *)(BMD_WR + (o)))
+#define WR32(o) (*(volatile uint32_t *)(BMD_WR + (o)))
+
+/* 16 x 16 -> 32 bits in one instruction (GCC calls __mulsi3 for these, some 250 cycles) */
+static inline int32_t bmd_muls(int16_t a, int16_t b)
+{
+    int32_t r = a;
+    __asm__ ("muls.w %1,%0" : "+d" (r) : "dmi" (b));
+    return r;
+}
+
+static void bmd_own(void) { while (read_byte(0xFF8003) & 1) ; }        /* 2M: RET 0 = ours */
+static void bmd_give(void) { write_byte(0xFF8003, read_byte(0xFF8003) | 1); }
+
+static void bmd_suspend(void)
+{
+    if (!bmd_on) return;
+    bmd_own();
+    do_md_cmd0(MD_CMD_BMD_OFF);
+    write_byte(0xFF8003, bmd_mode1m & ~2);  /* 1M again, the bank as it was */
+    while (read_byte(0xFF8003) & 2) ;
+    bmd_on = 0;
+}
+
+static int bmd_load(uint32_t off)
+{
+    bmd_suspend();
+    bmd_mode1m = read_byte(0xFF8003);
+    write_byte(0xFF8003, (bmd_mode1m & ~0x1C) | 1);   /* 2M, no priority mode, to the 68000 */
+    /* the header, then the stamps and the map (16 KB a command, RV = 1: the cart at 0x400000);
+       the 68000 owns Word RAM: it reads the magic and the counts for us */
+    const uint32_t a = 0x400000 + off;
+    do_md_cmd3(MD_CMD_RV_COPY_FAST, a, 0x200000 + BMD_HEAD, 1024);
+    const uint32_t magic = (uint32_t)do_md_cmd1(MD_CMD_READ_32X_32, 0x200000 + BMD_HEAD);
+    const uint32_t vn = (uint32_t)do_md_cmd1(MD_CMD_READ_32X_32, 0x200000 + BMD_HEAD + 4);
+    const uint32_t nst = vn & 0xFFFF;
+    if (magic != 0x4F4A424DUL || (vn >> 16) != 2 || nst == 0 || nst > 319) {   /* 'OJBM' v2 */
+        write_byte(0xFF8003, bmd_mode1m & ~2);
+        while (read_byte(0xFF8003) & 2) ;
+        return 0;
+    }
+    for (uint32_t p = 0; p < nst * 512; p += 0x4000)
+        do_md_cmd3(MD_CMD_RV_COPY_FAST, a + 1024 + p, 0x200000 + 512 + p, nst * 512 - p < 0x4000 ? nst * 512 - p : 0x4000);
+    for (uint32_t p = 0; p < 0x10000; p += 0x4000)
+        do_md_cmd3(MD_CMD_RV_COPY_FAST, a + 1024 + nst * 512 + p, 0x200000 + BMD_GRIDTMP + p, 0x4000);
+    do_md_cmd0(MD_CMD_BMD_SETUP);                      /* ends with Word RAM to us */
+    bmd_own();
+    for (uint32_t o = 0; o < 0x10000; o += 4)
+        *(uint32_t *)(bmd_grid + o) = WR32(BMD_GRIDTMP + o);
+    for (int t = 0; t < 60; t++) {
+        bmd_tstamp[0][t] = WR16(BMD_HEAD + 80 + 2 * t);
+        bmd_tanim[0][t] = WR16(BMD_HEAD + 200 + 2 * t);
+        bmd_tstamp[1][t] = WR16(BMD_HEAD + 320 + 2 * t);
+        bmd_tanim[1][t] = WR16(BMD_HEAD + 440 + 2 * t);
+    }
+    bmd_layers = WR8(BMD_HEAD + 79) == 2 ? 2 : 1;
+    bmd_nphase = WR16(BMD_HEAD + 10);
+    if (bmd_nphase < 1 || bmd_nphase > 16) bmd_nphase = 1;
+    for (uint32_t o = 0; o < 0x100; o += 4) WR32(BMD_MAP_A + o) = 0;     /* the stamp maps */
+    for (uint32_t o = 0; o < 0x8000; o += 4) WR32(BMD_IMG_A + o) = 0;    /* lines 85-87 stay 0 */
+    for (int i = 0; i < BMD_ROWS; i++) {
+        const int y = BMD_ROWS - i;
+        bmd_dist[i] = (int32_t)((800L << 10) / (92 - y));
+        bmd_k[i] = (int16_t)(bmd_dist[i] / 5);      /* step (5.11) = d * cos / (160 * 1024) */
+    }
+    bmd_on = 1;
+    return 1;
+}
+
+/* one layer's stamp map: the 8 x 8 tiles around (cx, cy) - the floor the view shows is less
+   than 80 pixels from there (cx, cy: the tile 45 pixels ahead of the player) */
+static void bmd_map(int L, int cx, int cy, int ph, uint32_t map)
+{
+    const uint16_t *ts = bmd_tstamp[L], *ta = bmd_tanim[L];
+    for (int ty = cy - 4; ty < cy + 4; ty++) {
+        const uint8_t *g = bmd_grid + ((ty & 255) << 8);
+        volatile uint16_t *m = (volatile uint16_t *)(BMD_WR + map + ((ty & 7) << 4));
+        for (int tx = cx - 4; tx < cx + 4; tx++) {
+            int t = g[tx & 255];
+            if (t > 59) t = 59;
+            const int st = ta[t] ? ta[t] + ph : ts[t];
+            m[tx & 7] = (uint16_t)(st << 2);
+        }
+    }
+}
+
+/* the chip: 32 x 32 stamps, 256 x 256 map, repeated; 320 x 85 into 11-cell columns from the
+   trace; started now (it reads the trace a line at a time as it goes) */
+static void bmd_start(uint32_t map, uint32_t img)
+{
+    *(volatile uint16_t *)0xFF8058 = 0x0003;
+    *(volatile uint16_t *)0xFF805A = (uint16_t)(map >> 2);
+    *(volatile uint16_t *)0xFF805C = 10;
+    *(volatile uint16_t *)0xFF805E = (uint16_t)(img >> 2);
+    *(volatile uint16_t *)0xFF8060 = 0;
+    *(volatile uint16_t *)0xFF8062 = 320;
+    *(volatile uint16_t *)0xFF8064 = BMD_ROWS;
+    *(volatile uint16_t *)0xFF8066 = (uint16_t)(BMD_TRACE >> 2);
+}
+static void bmd_wait(void) { while (*(volatile uint16_t *)0xFF8058 & 0x8000) ; }
+
+static int bmd_frame(uint16_t x13, uint16_t y13, int16_t cs, int16_t sn, int step)
+{
+    if (!bmd_on) return 0xFFFF;
+    bmd_own();
+    /* both stamp maps first, around the tile 45 pixels ahead (13.3: 360) */
+    const int ph = (int)bmd_muls((int16_t)step, (int16_t)bmd_nphase) >> 4;
+    const int cx = (uint16_t)(x13 + (bmd_muls(sn, 360) >> 10)) >> 8;
+    const int cy = (uint16_t)(y13 - (bmd_muls(cs, 360) >> 10)) >> 8;
+    bmd_map(0, cx, cy, ph, BMD_MAP_A);
+    if (bmd_layers == 2) bmd_map(1, cx, cy, ph, BMD_MAP_B);
+    /* the trace: OpenJazz's JJ1BonusLevel::draw, one line of the floor each; layer A starts
+       once the first lines are there (the chip takes some 1600 cycles a line, this loop a few
+       hundred) */
+    const int32_t X = (int32_t)x13 << 7, Y = (int32_t)y13 << 7;   /* 10-bit fractions */
+    volatile uint16_t *tr = (volatile uint16_t *)(BMD_WR + BMD_TRACE);
+    for (int i = 0; i < BMD_ROWS; i++) {
+        const int32_t d = bmd_dist[i];
+        const int16_t d4 = (int16_t)(d >> 2), f4 = (int16_t)((d - 16384) >> 2);
+        const int32_t sideX = bmd_muls(d4, cs) >> 8, sideY = bmd_muls(d4, sn) >> 8;
+        const int32_t fwdX = X + (bmd_muls(f4, sn) >> 8) - (sideX >> 1);
+        const int32_t fwdY = Y - (bmd_muls(f4, cs) >> 8) - (sideY >> 1);
+        tr[0] = (uint16_t)(fwdX >> 7);
+        tr[1] = (uint16_t)(fwdY >> 7);
+        tr[2] = (uint16_t)(bmd_muls(bmd_k[i], cs) >> 15);
+        tr[3] = (uint16_t)(bmd_muls(bmd_k[i], sn) >> 15);
+        tr += 4;
+        if (i == 3) bmd_start(BMD_MAP_A, BMD_IMG_A);
+    }
+    bmd_wait();
+    if (bmd_layers == 2) {
+        bmd_start(BMD_MAP_B, BMD_IMG_B);
+        bmd_wait();
+    }
+    bmd_give();
+    do_md_cmd0(MD_CMD_BMD_QUEUE);                      /* the 68000's vblank copies it and
+                                                          gives Word RAM back */
+    return 1;
+}
 
 /* OL-2: OpenLara levels.  CMD 38 with file number 100 + LevelID opens the level; CMD 46
    stores it at cart slot 16 (2 MB), where the SH2 reads it (0x02200000).  The ORDER must
@@ -950,8 +1123,9 @@ int main(void)
             }
         }
         uint16_t cmd = do_md_cmd1(MD_CMD_READ_32X_16, 0xA15120);
-        if (cmd == 0) {                  /* HW6: idle - pause ~0.2 ms before the 68K reads COMM0
-                                            again (fewer reads while the SH2 may be writing it) */
+        if (cmd == 0 && !bmd_on) {       /* HW6: idle - pause ~0.2 ms before the 68K reads COMM0
+                                            again (fewer reads while the SH2 may be writing it).
+                                            R9: not while the bonus floor runs (no disc reads) */
             volatile int k;
             for (k = 0; k < 150; k++) { if ((k & 3) == 0) cd_pump(); }   /* STREAM: read ahead */
         }
@@ -999,6 +1173,10 @@ int main(void)
         }
 
 #endif
+
+        /* R9: a command that may use Word RAM in 1M mode ends the bonus floor's 2M mode (the
+           floor is loaded again with its next frame: CMD 71 FRAME replies 0xFFFF) */
+        if (bmd_on && cmd != 0 && cmd != 71 && cmd != 45 && cmd != 54) bmd_suspend();
 
         if (cmd == 38) { 
             int img_idx = do_md_cmd1(MD_CMD_READ_32X_16, 0xA15122);
@@ -1389,6 +1567,21 @@ int main(void)
             sprintf(sfx_name, "SFX%02d.BIN", do_md_cmd1(MD_CMD_READ_32X_16, 0xA15122) & 0xFF);
             int nfx = pcm_load(sfx_name);
             do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA1512C, nfx);
+            do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA15120, 0);
+        }
+        else if (cmd == 71) {
+            /* R9 - CMD 71 "bonus level floor" (see bmd_load above) */
+            int op = do_md_cmd1(MD_CMD_READ_32X_16, 0xA15122);
+            int r = 0;
+            if ((op & 0xFF) == 1) r = bmd_load((uint32_t)do_md_cmd1(MD_CMD_READ_32X_32, 0xA15128));
+            else if ((op & 0xFF) == 2) {
+                uint32_t xy = (uint32_t)do_md_cmd1(MD_CMD_READ_32X_32, 0xA15128);
+                int16_t cs = (int16_t)do_md_cmd1(MD_CMD_READ_32X_16, 0xA15124);
+                int16_t sn = (int16_t)do_md_cmd1(MD_CMD_READ_32X_16, 0xA1512C);
+                r = bmd_frame((uint16_t)(xy >> 16), (uint16_t)xy, cs, sn, (op >> 8) & 15);
+            }
+            else if ((op & 0xFF) == 3) { bmd_suspend(); r = 1; }
+            do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA1512C, r);
             do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA15120, 0);
         }
         else if (cmd == 67) {

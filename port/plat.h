@@ -266,4 +266,13 @@ void plat_fatal(const char *msg) __attribute__((noreturn));
  * console has nothing to return to). Never returns. */
 void plat_exit(int code) __attribute__((noreturn));
 
+
+/* R9: the bonus level's floor drawn by the Sega CD's graphics chip on a Genesis plane
+ * (docs/R9_BONUS_FLOOR.md). load: the BONUSMD.BIN file in the cart; 1 = on. frame: the player's
+ * position (OpenJazz fixed, 10-bit fractions), fCos / fSin of the direction, the colour
+ * rotation's step (0-15); the floor shown with the next present. 0 = not available. */
+int  plat_bonusmd_load(const void *file, int hole, uint16_t hole555);
+int  plat_bonusmd_frame(int32_t x, int32_t y, int cs, int sn, int step);
+void plat_bonusmd_off(void);
+
 #endif
