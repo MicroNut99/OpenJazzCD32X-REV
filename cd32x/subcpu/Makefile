@@ -44,7 +44,7 @@ TARGET = CDROMPlayer
 # ---------------------------------------------------------------------------------------------
 SH2_BUILD   = ../sh2/CDLOADER.32x
 SH2_PAYLOAD = CDLOADER.BIN
-IMAGE_FILES = OPENLARA.32X IMAGE.RAW IMAGE8.RAW $(notdir $(wildcard ROMS/IMAGE9.RAW)) $(notdir $(wildcard ROMS/OJ*.PAK)) $(notdir $(wildcard ROMS/GB*.PAK)) $(SH2_PAYLOAD) $(notdir $(wildcard ROMS/*.PKD)) $(notdir $(wildcard ROMS/SFX*.BIN))      # D32X M1: the CD-boot-patched D32XR ROM image      # IMAGE.RAW = splash (KOBO_SPLASH 1); if missing: harmless note
+IMAGE_FILES = OPENLARA.32X IMAGE.RAW IMAGE8.RAW $(notdir $(wildcard ROMS/IMAGE9.RAW)) $(notdir $(wildcard ROMS/OJ*.PAK)) $(notdir $(wildcard ROMS/GB*.PAK)) $(notdir $(wildcard ROMS/OZ*.PAK)) $(notdir $(wildcard ROMS/GZ*.PAK)) $(SH2_PAYLOAD) $(notdir $(wildcard ROMS/*.PKD)) $(notdir $(wildcard ROMS/SFX*.BIN))      # D32X M1: the CD-boot-patched D32XR ROM image      # IMAGE.RAW = splash (KOBO_SPLASH 1); if missing: harmless note
 LIBS = $(LIBPATH) -lc -lgcc -lnosys
 OBJS = crt0.o main.o hw_md.o scd.o scd_fs.o cd.o kos.o cdfs.o sub_stubs.o
 FILES = files.o

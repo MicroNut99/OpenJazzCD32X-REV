@@ -1359,6 +1359,32 @@ static int save_depth, save_page;
 
 int plat_cart_page_now(void) { return page_now; }
 
+#define CMD_DISC_STAMP 70
+uint32_t plat_disc_stamp(void)
+{
+	static int known;
+	static uint32_t stamp;
+	if (!known) {
+		MARS_COMM8_32 = 0;
+		if (send_cmd(CMD_DISC_STAMP, 2000000UL)) stamp = MARS_COMM8_32;
+		known = 1;
+	}
+	return stamp;
+}
+
+#define CMD_UNPACK 69
+uint32_t plat_unpack(int src_page, uint32_t src_cart, int dst_page, uint32_t dst_cart)
+{
+	MARS_COMM2 = (uint16_t)(src_page | dst_page << 8);
+	MARS_COMM8_32 = src_cart;
+	MARS_COMM12 = (uint16_t)(dst_cart >> 15);
+	const int done = send_cmd(CMD_UNPACK, 2000000UL);
+	page_now = dst_page;                     /* window 1 shows the destination now */
+	*(volatile uint8_t *)0xFFFFFE92 = 0x11;   /* purge: the 68000 wrote the cart */
+	if (!done) { plat_log("UNPACK: COMMAND TIMED OUT"); return 0; }
+	return MARS_COMM12 == 0 ? MARS_COMM8_32 : 0;
+}
+
 int plat_cart_page(int page)
 {
 	if (page < 1 || page > 7) return 0;
@@ -1419,7 +1445,10 @@ int plat_pack_same_as_disc(int id, uint32_t cart_offset, uint32_t len)
 	if (open_at(id, cart_offset) != (int32_t)len) return 0;
 	const uint32_t chunks = (len + 32767) >> 15;
 	const uint32_t probe[2] = { 0, chunks - 1 };
-	for (int i = 0; i < 2; i++)
+	/* R7: a compressed pack starts with every block's packed length: a changed pack changes them,
+	 * so its first 32 KB are enough (one seek less when a world is entered) */
+	const int probes = id >= PACK_LEVEL_ID0 + PACK_LZ_ADD || chunks == 1 ? 1 : 2;
+	for (int i = 0; i < probes; i++)
 	{
 		MARS_COMM2 = (uint16_t)probe[i];
 		MARS_COMM8_32 = len;

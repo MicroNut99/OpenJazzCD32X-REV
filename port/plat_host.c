@@ -776,16 +776,26 @@ uint32_t plat_cart_offset_of(const void *p)
 }
 
 
+/* the disc file of command 38 number id (main.c's names) */
+static void host_pack_path(char *path, size_t n, const char *dir, int id)
+{
+	if (id >= PACK_GENESIS_ID0 + PACK_LZ_ADD)   /* R7: GZ<k>.PAK */
+		snprintf(path, n, "%s/GZ%03d.PAK", dir, id - PACK_GENESIS_ID0 - PACK_LZ_ADD);
+	else if (id >= PACK_LEVEL_ID0 + PACK_LZ_ADD)   /* R7: OZ<k>.PAK */
+		snprintf(path, n, "%s/OZ%03d.PAK", dir, id - PACK_LEVEL_ID0 - PACK_LZ_ADD);
+	else if (id >= PACK_GENESIS_ID0)   /* REV: a world's Genesis plane files */
+		snprintf(path, n, "%s/GB%03d.PAK", dir, id - PACK_GENESIS_ID0);
+	else
+		snprintf(path, n, "%s/OJ%03d.PAK", dir, id - PACK_LEVEL_ID0);
+}
+
 int32_t plat_load_pack(int id, uint32_t cart_offset, uint32_t max_bytes)
 {
 	const char *dir = getenv("T32X_PACK_DIR");
 	if (!dir || !*dir)
 		return -1;
 	char path[1024];
-	if (id >= PACK_GENESIS_ID0)   /* REV: a world's Genesis plane files */
-		snprintf(path, sizeof path, "%s/GB%03d.PAK", dir, id - PACK_GENESIS_ID0);
-	else
-		snprintf(path, sizeof path, "%s/OJ%03d.PAK", dir, id - PACK_LEVEL_ID0);
+	host_pack_path(path, sizeof path, dir, id);
 	FILE *f = fopen(path, "rb");
 	if (!f)
 		return -1;
@@ -901,8 +911,7 @@ static long hp_file(int id, uint8_t **data)
 	const char *dir = getenv("T32X_PACK_DIR");
 	if (!dir || !*dir) return -1;
 	char path[1024];
-	if (id >= PACK_GENESIS_ID0) snprintf(path, sizeof path, "%s/GB%03d.PAK", dir, id - PACK_GENESIS_ID0);
-	else snprintf(path, sizeof path, "%s/OJ%03d.PAK", dir, id - PACK_LEVEL_ID0);
+	host_pack_path(path, sizeof path, dir, id);
 	FILE *f = fopen(path, "rb");
 	if (!f) return -1;
 	fseek(f, 0, SEEK_END);
@@ -951,6 +960,52 @@ void plat_cart_piece_read(int piece, uint16_t *words, int n)
 	hp_restore();
 	const uint8_t *p = hp_piece[hp_phys(hp_now)] + (piece & 15) * 4096;
 	for (int i = 0; i < n && i < 2048; i++) words[i] = (uint16_t)(p[2 * i] << 8 | p[2 * i + 1]);
+}
+
+/* R7: the disc stamp, modelled: T32X_DISC_STAMP (default 1, one disc build) */
+uint32_t plat_disc_stamp(void)
+{
+	const char *e = getenv("T32X_DISC_STAMP");
+	return e && *e ? (uint32_t)strtoul(e, NULL, 0) : 1u;
+}
+
+/* R7: command 69, modelled: the blocks of src_page's pack unpacked into dst_page */
+uint32_t plat_unpack(int src_page, uint32_t src_cart, int dst_page, uint32_t dst_cart)
+{
+	plat_cart_page(src_page);
+	const uint8_t *h = plat_cart_ptr(src_cart);
+	if (memcmp(h, "OJLZ", 4) != 0) { plat_cart_page(dst_page); return 0; }
+	const uint32_t raw = (uint32_t)h[4] << 24 | (uint32_t)h[5] << 16 | (uint32_t)h[6] << 8 | h[7];
+	const int nb = h[8] << 8 | h[9];
+	uint32_t at = 12 + 2 * (uint32_t)nb, packed = at;
+	for (int b = 0; b < nb; b++) packed += ((uint32_t)(h[12 + 2 * b] << 8 | h[13 + 2 * b]) + 1) & ~1u;
+	uint8_t *copy = __real_malloc(packed), *out = __real_malloc(raw + 64);
+	memcpy(copy, h, packed);
+	uint32_t o = 0;
+	for (int b = 0; b < nb; b++) {
+		const uint32_t len = (uint32_t)(copy[12 + 2 * b] << 8 | copy[13 + 2 * b]);
+		const uint8_t *s = copy + at, *end = s + len;
+		uint8_t *d = out + o;
+		for (;;) {
+			unsigned t = *s++, L = t >> 4;
+			if (L == 15) { unsigned c; do { c = *s++; L += c; } while (c == 255); }
+			while (L--) *d++ = *s++;
+			if (s >= end) break;
+			const unsigned off = s[0] | s[1] << 8; s += 2;
+			unsigned M = t & 15;
+			if (M == 15) { unsigned c; do { c = *s++; M += c; } while (c == 255); }
+			M += 4;
+			const uint8_t *m = d - off;
+			while (M--) *d++ = *m++;
+		}
+		o += 32768;
+		at += (len + 1) & ~1u;
+	}
+	plat_cart_page(dst_page);
+	cart_map();
+	plat_cart_write(dst_cart - PLAT_CART_DATA_OFFSET, out, raw);
+	__real_free(copy); __real_free(out);
+	return raw;
 }
 
 void plat_save_area_enter(void) { }

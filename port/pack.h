@@ -65,6 +65,10 @@ extern "C" {
  * the world pack's), command 38 file number PACK_GENESIS_ID0 + k, cart 0x080000 (free up to
  * the common pack), mounted after the world pack */
 #define PACK_GENESIS_ID0  1200
+/* R7: the compressed copy of a world, bonus or Genesis plane pack (tools/ojlz.c, docs/
+ * R7_COMPRESSED_PACKS.md): command 38 file number id + PACK_LZ_ADD (OZ<k>.PAK, GZ<k>.PAK). The
+ * 8 / 16 MB builds keep these in the cart's pages and unpack one into the home slot to play it. */
+#define PACK_LZ_ADD       2000
 #define PACK_GENESIS_CART 0x080000u
 #define PACK_GENESIS_MAX  0x080000u
 
