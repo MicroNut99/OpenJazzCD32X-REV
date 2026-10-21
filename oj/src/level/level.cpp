@@ -174,8 +174,20 @@ int Level::playScene (const char* file) {
 void Level::timeCalcs () {
 
 	// Calculate smoothed fps
+#ifdef OJ32X
+	// PORT32X R7: from the real time between frames. The level's ticks advance at most 100 ms a
+	// frame (below), so the counter could never show less than 10 - a slower frame rate read 10.
+	{
+		static unsigned int lastGlobal;
+		const unsigned int dt = globalTicks - lastGlobal;
+		lastGlobal = globalTicks;
+		if (dt < 2000)
+			smoothfps = smoothfps + 1.0f - (smoothfps * ((float)dt) / 1000.0f);
+	}
+#else
 	smoothfps = smoothfps + 1.0f -
 		(smoothfps * ((float)(ticks - prevTicks)) / 1000.0f);
+#endif
 	/* This equation is a simplified version of
 	(fps * c) + (smoothfps * (1 - c))
 	where c = (1 / fps)

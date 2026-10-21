@@ -424,37 +424,103 @@ void JJ1Level::scrollBegin (int vX, int vY, int viewH) {
 }
 
 /** The sun / moon: fixed on the screen, behind the tiles - drawn on the sky's pixels only. */
+// R7: the sun drawn a pair of pixels at a time, from SDRAM (OJ32X_FAST_CODE). Before, every one
+// of its 1024 pixels was a function call, a frame buffer read to test for sky and a 16-bit
+// read-modify-write - three frame buffer accesses a pixel, alternating reads and writes (each
+// read waits for the VDP's write FIFO to empty). Now one 16-bit read (both pixels' sky test)
+// and one 16-bit write a pair; the Genesis plane test looks the tile up once per 32 pixels.
+#if defined(OJ32X_MARS) && defined(OJ32X_FAST_CODE)
+#define OJ_FAST_ORB __attribute__((section(".sdcode.fast"), optimize("O2"), noinline))
+#else
+#define OJ_FAST_ORB
+#endif
+namespace {
+	struct OrbJob {
+		const unsigned char* sp; int spPitch;          // the sun's 32 x 32 pixels
+		const unsigned char* tiles; int tPitch;        // the tile set (32 x 32 tiles, one above another)
+		const GridElement* grid;                       // grid[LH][LW], or nullptr: no Genesis plane
+		const JJ1EventType* eventSet;
+		int ox, oy, vX, vY, canvasW;
+		unsigned char key;
+	};
+	OJ_FAST_ORB void drawOrb (const OrbJob& j) {
+		const int xa = j.ox < 0 ? -j.ox : 0;
+		const int xb = j.ox + 32 > j.canvasW ? j.canvasW - j.ox : 32;
+		if (xb <= xa) return;
+		const unsigned char* sp = j.sp;
+		for (int y = 0; y < 32; y++, sp += j.spPitch) {
+			unsigned char* row = oj32x_screen_row(j.oy + y);
+			if (!row) continue;
+			const int wy = j.vY + j.oy + y;
+			const GridElement* grow = nullptr;
+			if (j.grid) {
+				if (wy >= TTOI(LH)) continue;
+				grow = j.grid + ITOT(wy) * LW;
+			}
+			// the tile the plane shows under the pixel (per 32 pixels): -1 none looked up yet
+			int tcol = -1;
+			bool tskip = false;                         // the plane covers this tile
+			const unsigned char* trow = nullptr;        // its pixel row (see-through test), or none
+			// pairs of screen pixels sx, sx + 1 with sx even (16-bit frame buffer words)
+			int sx0 = (j.ox + xa) & ~1;
+			for (int sx = sx0; sx < j.ox + xb; sx += 2) {
+				unsigned char v[2];
+				bool on[2] = { false, false };
+				for (int k = 0; k < 2; k++) {
+					const int x = sx + k - j.ox;
+					if (x < xa || x >= xb) continue;
+					const unsigned char c = sp[x];
+					if (c == j.key) continue;
+					if (grow) {
+						const int wx = j.vX + sx + k;
+						if (wx >= TTOI(LW)) continue;
+						const int tc = ITOT(wx);
+						if (tc != tcol) {
+							tcol = tc;
+							const GridElement* ge = grow + tc;
+							tskip = ge->bg != 0;
+							trow = nullptr;
+							if (!tskip && !fgTile(ge, j.eventSet))
+								trow = j.tiles + (TTOI(ge->tile) + (wy & 31)) * j.tPitch;
+						}
+						if (tskip) continue;
+						if (trow && trow[wx & 31] != j.key) continue;
+					}
+					v[k] = c; on[k] = true;
+				}
+				if (!on[0] && !on[1]) continue;
+				volatile unsigned short* w = reinterpret_cast<volatile unsigned short*>(row + sx);
+				const unsigned short old = *w;               // both pixels: the sky test, the merge
+				unsigned char b[2];
+				memcpy(b, (const void*)&old, 2);
+				bool any = false;
+				for (int k = 0; k < 2; k++)
+					if (on[k] && b[k] >= 156) { b[k] = v[k]; any = true; }
+				if (!any) continue;
+				unsigned short nw;
+				memcpy(&nw, b, 2);
+				*w = nw;
+			}
+		}
+	}
+}
+
 void JJ1Level::scrollOrb (int vX, int vY) {
 
 	if (!sky || !skyOrb || !oj32x_sky_on) return;   // J23b: no sun / moon with the background off
 	const int ox = ((canvasW * 4) / 5) - (vX & 3), oy = ((canvasH - 33) * 3) / 25;
-	const unsigned char* sp = static_cast<const unsigned char*>(tileSet->pixels) + TTOI(skyOrb + (vX & 3)) * tileSet->pitch;
-	const unsigned char key = video.getColorKey(tileSet);
-	const bool plane = genbg_active();
-	for (int y = 0; y < 32; y++, sp += tileSet->pitch) {
-		unsigned char* row = oj32x_screen_row(oy + y);
-		if (!row) continue;
-		const int wy = vY + oy + y;
-		for (int x = 0; x < 32; x++) {
-			const int sx = ox + x;
-			if (sx < 0 || sx >= canvasW) continue;
-			if (sp[x] == key || row[sx] < 156) continue;
-			if (plane) {
-				// REV: the tiles are on the Genesis plane, not in the ring: the sun only where
-				// the level shows sky (no black cell, the tile there see-through)
-				const int wx = vX + sx;
-				if (wx >= TTOI(LW) || wy >= TTOI(LH)) continue;
-				const GridElement* ge = grid[ITOT(wy)] + ITOT(wx);
-				if (ge->bg) continue;
-				if (!fgTile(ge, eventSet)) {
-					const unsigned char* tp = static_cast<const unsigned char*>(tileSet->pixels) +
-						(TTOI(ge->tile) + (wy & 31)) * tileSet->pitch + (wx & 31);
-					if (*tp != key) continue;
-				}
-			}
-			oj32x_put_pixel(row + sx, sp[x]);
-		}
-	}
+	OrbJob j;
+	j.sp = static_cast<const unsigned char*>(tileSet->pixels) + TTOI(skyOrb + (vX & 3)) * tileSet->pitch;
+	j.spPitch = tileSet->pitch;
+	j.tiles = static_cast<const unsigned char*>(tileSet->pixels);
+	j.tPitch = tileSet->pitch;
+	// REV: the tiles are on the Genesis plane, not in the ring: the sun only where the level
+	// shows sky (no black cell, the tile there see-through)
+	j.grid = genbg_active() ? &grid[0][0] : nullptr;
+	j.eventSet = eventSet;
+	j.ox = ox; j.oy = oy; j.vX = vX; j.vY = vY; j.canvasW = canvasW;
+	j.key = video.getColorKey(tileSet);
+	drawOrb(j);
 	// the background there is restored next time like a sprite's
 	(void)vY;
 	if (cur && cur->nDirty < 256) {

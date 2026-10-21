@@ -267,11 +267,25 @@ int SDL_SetPalette(SDL_Surface *s, int flags, const SDL_Color *colors, int first
 		}
 	}
 	if ((flags & SDL_PHYSPAL) && s == screen_surface) {
+		/* R7: the border and profiler colours below depend only on entries that are not the
+		 * Genesis plane's background (with the plane on, the border is the darkest of those, the
+		 * profiler's come from 0-155): the sky's rotation, every frame, changes none of them -
+		 * no search through 256 entries then */
+		static bool searched;
+		bool search = !searched;
+		const bool plane = genbg_active();
 		for (int i = 0; i < n; ++i) {
 			const SDL_Color &c = colors[i];
 			uint16_t v = (uint16_t)((c.r >> 3) | (c.g >> 3) << 5 | (c.b >> 3) << 10);
-			phys555[first + i] = v;
+			if (phys555[first + i] != v) {
+				phys555[first + i] = v;
+				if (!plane || !genbg_is_background(first + i)) search = true;
+			}
 		}
+		static bool plane_was;
+		if (plane != plane_was) { plane_was = plane; search = true; }
+		if (!search) return 1;
+		searched = true;
 		/* the 12 lines above and below the 200-line picture show one palette entry; colour 0
 		 * is white in some levels' palettes (white bars) - use the darkest entry instead */
 		int best = 0, bestv = 1 << 30, light = 0, lightv = -1;
@@ -513,6 +527,7 @@ struct ScrollMap {
 	bool on;
 	Uint8 *ring, *panel;
 	int wx0, vX, vY, viewH;
+	int r0;                       /* R7: vY % RING_H, worked out once a frame (no division a row) */
 	SDL_Rect *rec; int recCap; int *recN; bool *recOverflow;
 };
 static ScrollMap smap;
@@ -551,6 +566,7 @@ void oj32x_scroll_map(bool on, int wx0, int vX, int vY, int viewH)
 	smap.panel = plat_scroll_panel();
 #endif
 	smap.wx0 = wx0; smap.vX = vX; smap.vY = vY; smap.viewH = viewH;
+	smap.r0 = vY >= 0 ? vY % OJ32X_RING_H : (OJ32X_RING_H - (-vY % OJ32X_RING_H)) % OJ32X_RING_H;
 	view_init(ring_view, smap.ring, OJ32X_RING_W, OJ32X_RING_H);
 	view_init(panel_view, smap.panel, PLAT_SCREEN_W, OJ32X_PANEL_H);
 }
@@ -581,12 +597,16 @@ SDL_Surface *oj32x_ring_surface(void)
 
 /* a pointer to screen row y (screen column 0) while the mapping is on - for code that writes
  * pixels itself (the profiler box); nullptr outside the screen */
-Uint8 *oj32x_screen_row(int y)
+OJ_FAST Uint8 *oj32x_screen_row(int y)
 {
 	if (!smap.on) return screen_surface ? static_cast<Uint8 *>(screen_surface->pixels) + y * screen_surface->pitch : nullptr;
 	if (y < 0) return nullptr;
-	if (y < smap.viewH)
-		return smap.ring + ((smap.vY + y) % OJ32X_RING_H) * OJ32X_RING_W + (smap.vX - smap.wx0);
+	if (y < smap.viewH) {
+		/* R7: the ring row without a division (__sdivsi3 is a long loop on the SH2) */
+		int r = smap.r0 + y;
+		while (r >= OJ32X_RING_H) r -= OJ32X_RING_H;
+		return smap.ring + r * OJ32X_RING_W + (smap.vX - smap.wx0);
+	}
 	if (y - smap.viewH < OJ32X_PANEL_H) return smap.panel + (y - smap.viewH) * PLAT_SCREEN_W;
 	return nullptr;
 }
@@ -625,7 +645,8 @@ static void map_pieces(int x, int y, int w, int h, Op op)
 		record_world(x, vy0, w, vy1 - vy0);
 		int row = vy0;
 		while (row < vy1) {
-			const int r = (smap.vY + row) % OJ32X_RING_H;
+			int r = smap.r0 + row;                     /* R7: no division */
+			while (r >= OJ32X_RING_H) r -= OJ32X_RING_H;
 			int n = OJ32X_RING_H - r;
 			if (n > vy1 - row) n = vy1 - row;
 			op(&ring_view.s, x + smap.vX - smap.wx0, r, w, n, 0, row - y);
@@ -737,7 +758,7 @@ int SDL_Flip(SDL_Surface *screen)
 			panel_hash_valid[b] = true;
 		}
 #endif
-		plat_present_scroll(phys555, smap.vY % OJ32X_RING_H, smap.vX - smap.wx0, smap.viewH);
+		plat_present_scroll(phys555, smap.r0, smap.vX - smap.wx0, smap.viewH);
 		oj32x_prof(5);
 		oj32x_prof_frame();
 		/* the mapping lasts one frame, from the level's scrollBegin to this present, so a
