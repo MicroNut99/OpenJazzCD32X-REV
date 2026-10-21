@@ -1,5 +1,5 @@
 /*
- * ojlz - OpenJazz CD32X R7: a pack compressed for the 8 / 16 MB cart (docs/R7_COMPRESSED_PACKS.md).
+ * ojlz - OpenJazz CD32X R8: a pack compressed for the 8 / 16 MB cart (docs/R8_COMPRESSED_PACKS.md).
  *
  *   ojlz in.pak out.pak        compress
  *   ojlz -t in.pak             compress, unpack again and compare (a test)

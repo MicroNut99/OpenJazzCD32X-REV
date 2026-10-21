@@ -31,6 +31,7 @@
 
 #include "mars/font3x5.h"
 
+static int loading_up;     /* the loading screen is on: a second pack of the same load keeps it */
 static int fill_running;   /* FILL: the boot's copying shows the splash, not the loading screen */
 
 /* ------------------------------------------------------------ registers */
@@ -878,6 +879,7 @@ void plat_present(const uint8_t *pixels, int pitch, const uint16_t *palette555)
 {
 	genbg_hide();
 	stack_guard_check();
+	loading_up = 0;                          /* the game's picture: a load shows the loading screen again */
 	write_game_line_table();
 
 	volatile uint32_t *dst = FB32 + (FB_PIX_WORD * 2) / 4;
@@ -922,6 +924,7 @@ int plat_back_index(void) { return VDP_FBCTL & FBCTL_FS; }
 void plat_present_scroll(const uint16_t *palette555, int row0, int xoff, int viewH)
 {
 	stack_guard_check();
+	loading_up = 0;                          /* the game's picture: a load shows the loading screen again */
 	for (int line = 0; line < 256; line++)
 	{
 		const int g = line - PLAT_TOP_BORDER;
@@ -981,6 +984,7 @@ void plat_present_canvas(const uint16_t *palette555)
 {
 	genbg_hide();
 	stack_guard_check();
+	loading_up = 0;                          /* the game's picture: a load shows the loading screen again */
 	write_game_line_table();
 	present_finish(FB32 + (FB_PIX_WORD * 2 + PLAT_GAME_H * PLAT_SCREEN_W) / 4, palette555);
 }
@@ -1291,7 +1295,8 @@ static void give_fb(void)
 
 static void loading_screen(void)
 {
-	if (fill_running) return;
+	if (fill_running || loading_up) return;
+	loading_up = 1;
 	MARS_COMM2 = 0;
 	if (!send_cmd(CMD_OPEN_FILE, 2000000UL)) return;
 	uint32_t len = MARS_COMM8_32;
