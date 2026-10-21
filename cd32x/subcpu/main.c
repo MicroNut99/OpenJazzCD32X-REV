@@ -40,6 +40,113 @@ extern int  scd_track_info(int track);
 extern void scd_cdda_play(int track);                       
 extern int  scd_bios_call(int fn, int d1, void *a0);       
 
+/* STREAM (OpenJazz R7, Hurrican P2b): the chunks of a file (CMD 46 / 47 and the boot loads) come from a drive that
+   keeps reading: cd_stream_read starts it once (ROMREADN to the end of the file) and takes the
+   sectors as they come, checking each one's header; a missed or wrong sector starts it again at
+   the sector wanted. Anything else that uses the drive (other reads, opening a file, the CD
+   audio, any BIOS call) stops the stream first (the macros below), so it starts afresh. */
+extern void scd_stream_start(int lba, int count);
+extern int  scd_stream_sector(void *buf, void *hdr, int spins);
+static int st_next = -1, st_end;               /* the drive delivers st_next .. st_end - 1 */
+static uint32_t st_restarts;                   /* diagnostics: how often it had to start again */
+#define scd_sub_read(p, l, n)  (st_next = -1, scd_sub_read(p, l, n))
+#define scd_open_file(n)       (st_next = -1, scd_open_file(n))
+#define scd_bios_call(f, d, a) (st_next = -1, scd_bios_call(f, d, a))
+static uint32_t st_low, st_high, st_err;        /* diagnostics */
+static int unbcd(int v) { return (v >> 4) * 10 + (v & 15); }
+static void cd_stream_read(uint8_t *dst, int lba, int n, int file_end)
+{
+    int fails = 0;
+    while (n > 0) {
+        if (lba != st_next || lba >= st_end) {
+            int count = file_end - lba;
+            if (count < n) count = n;
+            scd_stream_start(lba, count);
+            st_next = lba; st_end = lba + count;
+            st_restarts++;
+        }
+        uint8_t hdr[4];
+        const int r = scd_stream_sector(dst, hdr, 400000);
+        const int got = unbcd(hdr[0]) * 4500 + unbcd(hdr[1]) * 75 + unbcd(hdr[2]) - 150;
+        if (r == 0 && got < lba && got >= lba - 64) {    /* an earlier sector (the drive's run-up): skip it */
+            st_low++;
+            continue;
+        }
+        if (r != 0 || got != lba) {                      /* failed, or sectors were missed */
+            if (r != 0) st_err++; else st_high++;
+            st_next = -1;                                /* start again at this sector */
+            if (++fails > 64) { scd_sub_read(dst, lba, n); return; }   /* the old way */
+            continue;
+        }
+        st_next++; lba++; n--; dst += 2048;
+    }
+}
+
+/* STREAM: read-ahead. While the 68000 copies a chunk to the cart (and reads it back), and while
+   the Sub-CPU waits for the next command, the drive goes on delivering sectors; they would be
+   lost (its buffer holds only a few), so cd_pump takes each one as it arrives into st_buf - the
+   start of the next chunk. cd_chunk_read uses what st_buf holds and reads the rest. */
+#define ST_RING 32                                   /* sectors (64 KB): two chunks */
+static uint8_t st_buf[ST_RING * 2048] __attribute__((aligned(4)));
+static int st_buf_lba = -1, st_buf_n, st_buf_pos;      /* sector st_buf_lba is in slot st_buf_pos */
+extern void send_md_cmd2(int cmd, int arg1, int arg2);
+extern void send_md_cmd3(int cmd, int arg1, int arg2, int arg3);
+extern int wait_md_cmd(void);
+static void cd_pump(void)
+{
+    if (st_next < 0 || st_buf_lba < 0 || st_buf_n >= ST_RING || st_next >= st_end ||
+        st_next != st_buf_lba + st_buf_n)
+        return;
+    uint8_t hdr[4];
+    const int r = scd_stream_sector(st_buf + ((st_buf_pos + st_buf_n) % ST_RING) * 2048, hdr, 1);
+    if (r == -2) return;                                 /* no sector yet */
+    const int got = unbcd(hdr[0]) * 4500 + unbcd(hdr[1]) * 75 + unbcd(hdr[2]) - 150;
+    if (r == 0 && got < st_next && got >= st_next - 64) { st_low++; return; }   /* run-up */
+    if (r != 0 || got != st_next) { st_next = -1; return; }                    /* lost: start again when asked */
+    st_buf_n++; st_next++;
+}
+/* a 68000 command that pumps the drive while it runs */
+static int md_cmd3_pumping(int cmd, int a1, int a2, int a3)
+{
+    send_md_cmd3(cmd, a1, a2, a3);
+    while (read_byte(0xFF800E)) cd_pump();               /* 0xFF800E: the 68000 is busy */
+    return wait_md_cmd();
+}
+extern void send_md_cmd0(int cmd);
+extern void send_md_cmd1(int cmd, int arg1);
+extern void send_md_cmd4(int cmd, int arg1, int arg2, int arg3, int arg4);
+static int md_wait_pumping(void)
+{
+    while (read_byte(0xFF800E)) cd_pump();
+    return wait_md_cmd();
+}
+static int md_cmd0_p(int c) { send_md_cmd0(c); return md_wait_pumping(); }
+static int md_cmd1_p(int c, int a) { send_md_cmd1(c, a); return md_wait_pumping(); }
+static int md_cmd2_p(int c, int a, int b) { send_md_cmd2(c, a, b); return md_wait_pumping(); }
+static int md_cmd4_p(int c, int a, int b, int d, int e) { send_md_cmd4(c, a, b, d, e); return md_wait_pumping(); }
+/* from here on every 68000 command keeps the drive's sectors coming (the main loop's commands) */
+#define do_md_cmd0 md_cmd0_p
+#define do_md_cmd1 md_cmd1_p
+#define do_md_cmd2 md_cmd2_p
+#define do_md_cmd3 md_cmd3_pumping
+#define do_md_cmd4 md_cmd4_p
+static void cd_chunk_read(uint8_t *dst, int lba, int n, int file_end)
+{
+    int k = 0;
+    if (st_buf_lba >= 0 && lba >= st_buf_lba && lba < st_buf_lba + st_buf_n) {
+        const int skip = lba - st_buf_lba;               /* sectors read ahead that are not wanted */
+        st_buf_pos = (st_buf_pos + skip) % ST_RING; st_buf_lba = lba; st_buf_n -= skip;
+        k = st_buf_n < n ? st_buf_n : n;
+        for (int i = 0; i < k; i++)
+            memcpy(dst + i * 2048, st_buf + ((st_buf_pos + i) % ST_RING) * 2048, 2048);
+        st_buf_pos = (st_buf_pos + k) % ST_RING; st_buf_lba += k; st_buf_n -= k;
+    }
+    if (k < n) {
+        cd_stream_read(dst + k * 2048, lba + k, n - k, file_end);
+        st_buf_lba = lba + n; st_buf_n = 0; st_buf_pos = 0;   /* the read-ahead goes on from here */
+    }
+}
+
 /* 68K VBlank Tick Macro. Sub-CPU accesses Main CPU Comm Registers via 0xFF8000 */
 #define GET_TICKS read_long(0xFF801C)
 
@@ -605,7 +712,7 @@ int main(void)
         if (cmd == 0) {                  /* HW6: idle - pause ~0.2 ms before the 68K reads COMM0
                                             again (fewer reads while the SH2 may be writing it) */
             volatile int k;
-            for (k = 0; k < 150; k++) { }
+            for (k = 0; k < 150; k++) { if ((k & 3) == 0) cd_pump(); }   /* STREAM: read ahead */
         }
 
         /* KOBO K5 - PAD FAST PATH.  WHY: the SH2 asks for the pad (CMD 48) every frame and
@@ -760,16 +867,18 @@ int main(void)
             }
 #else
             if (n > 0) {
-                scd_sub_read((void *)0x0C0000, saved_lba + chunk * 16, n);   
+                /* STREAM: the drive reads on from the last chunk */
+                cd_chunk_read((uint8_t *)0x0C0000, saved_lba + chunk * 16, n,
+                              (int)(saved_lba + (saved_len + 2047) / 2048));
                 switch_banks();                                   
                 if (cmd != CMD_CHUNK_COMPARE)          /* CMD 47: compare only, no write */
                     for (p = 0; p < bytes; p += 0x4000)
-                        do_md_cmd3(MD_CMD_CHILLY_RV_MEMCPY, 0x400000 + coff + p, 0x200000 + p,
-                                   bytes - p < 0x4000 ? bytes - p : 0x4000);
+                        md_cmd3_pumping(MD_CMD_CHILLY_RV_MEMCPY, 0x400000 + coff + p, 0x200000 + p,
+                                        bytes - p < 0x4000 ? bytes - p : 0x4000);
 #if CART_VERIFY_READBACK
                 do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA15104, (int)(coff >> 20) & 3);   
                 for (p = 0; !novfy && p < bytes; p += 0x4000)
-                    do_md_cmd3(MD_CMD_CHILLY_MEMCPY, 0x208000 + p,
+                    md_cmd3_pumping(MD_CMD_CHILLY_MEMCPY, 0x208000 + p,
                                0x900000 + ((coff + p) & 0xFFFFF),
                                bytes - p < 0x4000 ? bytes - p : 0x4000);
 #endif
@@ -778,7 +887,19 @@ int main(void)
                 {   
                     volatile uint8_t *disc = (volatile uint8_t *)0x0C0000;
                     volatile uint8_t *cart = (volatile uint8_t *)0x0C8000;
-                    for (k = 0; !novfy && k < bytes; k++) {
+                    /* STREAM: four bytes at a time (the byte loop took about 100 ms a chunk, longer
+                       than the drive's read-ahead lasts); the byte compare below finds the place */
+                    {
+                        const volatile uint32_t *dw = (const volatile uint32_t *)disc;
+                        const volatile uint32_t *cw = (const volatile uint32_t *)cart;
+                        int w;
+                        for (w = 0; !novfy && w < bytes / 4; w++) {
+                            if ((w & 255) == 0) cd_pump();
+                            if (dw[w] != cw[w]) break;
+                        }
+                        k = novfy ? bytes : w * 4;               /* the byte loop starts here */
+                    }
+                    for (; !novfy && k < bytes; k++) {
                         if (disc[k] != cart[k]) {
                             sprintf(tbuf, "MISMATCH C%d +%05X DISC %02X CART %02X ", chunk, k,
                                     disc[k], cart[k]);
@@ -905,7 +1026,8 @@ int main(void)
                RAM mode register on real hardware.  The real K12 fault was zero words not landing
                in the frame buffer - fixed on the SH2 side by clearing the area first.) */
             if (n > 0) {
-                scd_sub_read((void *)0x0C0000, saved_lba + chunk * sec, n);  /* CD -> Word RAM */
+                cd_stream_read((uint8_t *)0x0C0000, saved_lba + chunk * sec, n,      /* CD -> Word RAM (STREAM) */
+                               (int)(saved_lba + (saved_len + 2047) / 2048));
                 switch_banks();                                               /* -> 68K side    */
                 do_md_cmd4(MD_CMD_COPY_WORDS, 0x200000,
                            cmd == 51 ? 0x840200 + off : 0x852000, n * 2048, 0);

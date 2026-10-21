@@ -27,3 +27,32 @@ confidential repo, `ARES_VS_CONSOLE_TIMING.md`).
 ## Build
 
 The default disc name is now R7 (`R7-16MB`, `R7-16MB-PROF`, `R7-8MB`).
+
+## Loading (R7, measured in ares)
+
+**The drive reads on.** `cd32x/subcpu/main.c` + `scd.c` (STREAM):
+- The old reads sent the drive back to its sector for every 32 KB chunk (`ReadSectorsSUB`:
+  CDCSTOP + ROMREADN each time), so it searched once per chunk: about 41 KB/s, the same as
+  measured on the console.
+- Now one ROMREADN runs to the end of the file. Each sector's header is checked; a missed or
+  wrong sector starts the drive again at the sector wanted.
+- While the 68000 copies a chunk to the cart and reads it back, the Sub-CPU takes the sectors
+  that arrive into a 64 KB read-ahead buffer (`st_buf`). The read-back compare runs four bytes
+  at a time.
+- Loads now run at about 104-145 KB/s.
+
+**The 16 MB cart is filled on the first boot.** `cartcache_fill`, called from `plat_mars.c`:
+- **What is copied:** the world packs (with their Genesis plane packs) that are not in the cart
+  yet, in play order, until the pages are full. That is about 9.4 MB, ten or eleven worlds.
+- **The screen:** the splash shows "COPYING TO THE CART - START: SKIP" and the bar.
+- **Start** stops the copying; the rest load when they are played, as before.
+- **Later boots** copy nothing. Packs already in the cart are checked against the disc when
+  they are used, as before.
+- **Worlds that do not fit** load from the disc the first time they are played (now about 2.5
+  times faster). Each one replaces the page used longest ago.
+
+| ares, blank 16 MB cart | R5 | R7 |
+|---|---|---|
+| first boot to the menu | ~83 s (engine + common pack) | ~150 s (also about ten worlds copied) |
+| a world not in the cart | ~22 s | ~8-10 s (estimated from the read speed, not timed) |
+| a world in the cart | ~5 s (disc check) | ~5 s |

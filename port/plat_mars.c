@@ -31,6 +31,8 @@
 
 #include "mars/font3x5.h"
 
+static int fill_running;   /* FILL: the boot's copying shows the splash, not the loading screen */
+
 /* ------------------------------------------------------------ registers */
 #define MARS_ADAPTER_B   (*(volatile uint8_t  *)0x20004000)
 #define MARS_INTMSK      (*(volatile uint16_t *)0x20004000)
@@ -581,6 +583,42 @@ static void pack_load(void)
 		plat_log("PACK: COPIED BUT NOT A PACK (OJPK)");
 }
 
+#if OJ32X_CART_MB
+#include "cartcache.h"
+/* R7 - FILL: on the boot, the packs that are not in the cart yet are copied into its free pages
+ * (cartcache_fill), so the first boot fills the 16 MB cart and later ones load nothing. Start
+ * stops it (the rest load when they are played, as before). */
+static int fill_progress(int done, int total)
+{
+	for (int i = 0; i < 2; i++)
+	{
+		splash_text(28, 150, "COPYING TO THE CART - START: SKIP");
+		splash_bar((uint32_t)done, (uint32_t)total);
+		flip_wait();
+	}
+	return (plat_read_pad() & PAD_START) != 0;
+}
+static void cart_fill(void)
+{
+	fill_running = 1;
+	/* Jazz CD's worlds in play order, then Holiday Hare '95's (port/pack.h: OJ<world * 10>,
+	 * +100 for Holiday Hare '95; GB<k>: the world's Genesis plane) */
+	static const int k[] = { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150,
+	                         160, 170, 180, 190, 200, 210, 220, 230, 300, 310, 320, 330, 340, 350,
+	                         360, 370, 380, 390, 400, 410, 500, 510, 520, 600, 610 };
+	enum { N = sizeof k / sizeof k[0] };
+	int ids[N], gbs[N];
+	for (int i = 0; i < N; i++) { ids[i] = PACK_LEVEL_ID0 + k[i]; gbs[i] = PACK_GENESIS_ID0 + k[i]; }
+	cartcache_fill(ids, gbs, N, fill_progress);
+	fill_running = 0;
+	for (int i = 0; i < 2; i++)
+	{
+		splash_text(28, 150, "                                 ");
+		flip_wait();
+	}
+}
+#endif
+
 void plat_mars_entry(void)
 {
 	/* Tyrian's start-up minus the 68000 handshake (see the top of this file). */
@@ -619,6 +657,9 @@ void plat_mars_entry(void)
 	plat_log("PACK LOADING");
 	pack_load();   /* always Jazz CD's common pack - Holiday Hare '95 is an episode */
 	sfx_load();
+#if OJ32X_CART_MB
+	cart_fill();   /* R7: the 16 MB cart filled on the first boot */
+#endif
 	if (OJ32X_SPLASH)
 		while (vblank_count - splash_from < OJ32X_SPLASH_HOLD) { }
 	set_genesis_text(0);
@@ -1250,6 +1291,7 @@ static void give_fb(void)
 
 static void loading_screen(void)
 {
+	if (fill_running) return;
 	MARS_COMM2 = 0;
 	if (!send_cmd(CMD_OPEN_FILE, 2000000UL)) return;
 	uint32_t len = MARS_COMM8_32;

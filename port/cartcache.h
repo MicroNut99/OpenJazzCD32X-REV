@@ -20,6 +20,10 @@ int cartcache_pages(void);
  * 0: not done (a 4 MB cart, or it does not fit) - the caller uses the home slot. */
 int cartcache_world(int world_id, int gb_id, uint32_t *world_off, uint32_t *gb_off);
 
+/* FILL: the packs of the list that are not in the cart yet, into pages with room (the first
+ * boot); progress(i, n) nonzero stops it. Returns the number copied. */
+int cartcache_fill(const int *ids, const int *gb_ids, int n, int (*progress)(int done, int total));
+
 #ifdef __cplusplus
 }
 #endif

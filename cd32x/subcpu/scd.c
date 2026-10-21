@@ -448,6 +448,60 @@ __asm__(
     "       rts\n"
     "       .popsection\n"
 );
+/* STREAM (OpenJazz R7, Hurrican P2b): the drive reads on between the 32 KB chunks of a file instead of being
+   stopped and sent to the next sector for each one (ReadSectorsSUB: CDCSTOP + ROMREADN every
+   call, a seek each time - about 42 KB/s on the console and in ares). main.c cd_stream_read
+   uses these two:
+     scd_stream_start(lba, count)        CDCSTOP, then ROMREADN for count sectors from lba
+     scd_stream_sector(buf, hdr, spins)  the next sector into buf (2048 bytes), its header (minute,
+                                         second, frame in BCD, mode) into hdr; 0 done, -1 the
+                                         transfer failed, -2 no sector after spins looks */
+extern void scd_stream_start(int lba, int count);
+extern int  scd_stream_sector(void *buf, void *hdr, int spins);
+__asm__(
+    "       .pushsection .text\n"
+    "       .align  2\n"
+    "       .globl  scd_stream_start\n"
+    "scd_stream_start:\n"
+    "       movem.l %d2-%d7/%a2-%a6,-(%sp)\n"
+    "       move.w  #0x0089,%d0\n"            /* CDCSTOP */
+    "       jsr     0x5F22.w\n"
+    "       lea     48(%sp),%a0\n"            /* -> lba, count (the arguments) */
+    "       move.w  #0x0020,%d0\n"            /* ROMREADN */
+    "       jsr     0x5F22.w\n"
+    "       movem.l (%sp)+,%d2-%d7/%a2-%a6\n"
+    "       rts\n"
+    "       .globl  scd_stream_sector\n"
+    "scd_stream_sector:\n"
+    "       movem.l %d2-%d7/%a2-%a6,-(%sp)\n"
+    "       move.l  56(%sp),%d7\n"            /* spins */
+    "1:     move.w  #0x008A,%d0\n"            /* CDCSTAT */
+    "       jsr     0x5F22.w\n"
+    "       bcc.b   2f\n"
+    "       subq.l  #1,%d7\n"
+    "       bne.b   1b\n"
+    "       moveq   #-2,%d0\n"
+    "       bra.b   9f\n"
+    "2:     andi.w  #0xF8FF,0x8004.w\n"       /* CDC destination: Sub-CPU */
+    "       ori.w   #0x0300,0x8004.w\n"
+    "3:     move.w  #0x008B,%d0\n"            /* CDCREAD */
+    "       jsr     0x5F22.w\n"
+    "       bcs.b   3b\n"
+    "       movea.l 48(%sp),%a0\n"            /* buf */
+    "       movea.l 52(%sp),%a1\n"            /* header */
+    "       move.w  #0x008C,%d0\n"            /* CDCTRN */
+    "       jsr     0x5F22.w\n"
+    "       bcc.b   4f\n"
+    "       moveq   #-1,%d0\n"
+    "       bra.b   9f\n"
+    "4:     move.w  #0x008D,%d0\n"            /* CDCACK */
+    "       jsr     0x5F22.w\n"
+    "       moveq   #0,%d0\n"
+    "9:     movem.l (%sp)+,%d2-%d7/%a2-%a6\n"
+    "       rts\n"
+    "       .popsection\n"
+);
+
 extern int do_md_cmd3(int cmd, int arg1, int arg2, int arg3);
 #define MD_CMD_COPY_TO_CART   23
 #define SCD_STAGE_SECTORS     16          /* 32 KB per chunk */

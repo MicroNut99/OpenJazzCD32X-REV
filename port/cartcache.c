@@ -223,4 +223,42 @@ int cartcache_world(int world_id, int gb_id, uint32_t *world_off, uint32_t *gb_o
 	return 1;
 }
 
+/* FILL (OpenJazz R7, Hurrican P2b): on a boot, every pack of the list that no page holds yet goes
+ * into the first page with room for it (with its Genesis pack, gb_ids[i], 0: none), in the
+ * list's order, until no page has room. Packs already there are not checked against the disc
+ * here (cartcache_world does that when one is used), so after the first boot this costs only the
+ * page tails read at the probe. progress(i, n) before each pack: nonzero stops the fill (the
+ * player pressed Start). Returns the number of packs copied. */
+int cartcache_fill(const int *ids, const int *gb_ids, int n, int (*progress)(int done, int total))
+{
+	if (cartcache_pages() <= 2) return 0;
+	int copied = 0;
+	for (int i = 0; i < n; i++) {
+		if (progress && progress(i, n)) break;
+		int there = 0;
+		for (int p = 2; p < pages && !there; p++) there = find(p, ids[i]) != NULL;
+		if (there) continue;
+		const int gb = gb_ids ? gb_ids[i] : 0;
+		const int32_t wl = plat_pack_open(ids[i]);
+		const int32_t gl = gb ? plat_pack_open(gb) : 0;
+		if (wl <= 0) continue;
+		const uint32_t need = (((uint32_t)wl + 0x7FFF) & ~0x7FFFu) + (gl > 0 ? (((uint32_t)gl + 0x7FFF) & ~0x7FFFu) : 0);
+		int best = -1;
+		for (int p = 2; p < pages && best < 0; p++)
+			if (PAGE_ROOM - pg[p].used >= need && pg[p].n + 2 <= MAX_ENTRIES) best = p;
+		if (best < 0) break;                        /* full: the rest load when they are played */
+		plat_cart_page(best);
+		const int first = pg[best].n;
+		const uint32_t at = pg[best].used;
+		int ok = add(best, ids[i], wl);
+		if (ok && gl > 0) ok = add(best, gb, gl);
+		if (!ok) { pg[best].n = first; pg[best].used = at; }
+		else copied++;
+		tail_write(best);                           /* the page's record, true either way */
+	}
+	plat_cart_page(1);
+	if (copied) say("CART FILL: %d PACKS COPIED", copied, 0, 0);
+	return copied;
+}
+
 #endif
