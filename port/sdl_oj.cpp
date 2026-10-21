@@ -1043,6 +1043,7 @@ void oj32x_level_pack(const char *levelFile)
 			}
 		}
 		if (plat_cart_page_now() != 1) plat_cart_page(1);
+		cartcache_home_changed();   /* R7: the home slot no longer holds an unpacked world */
 		const int32_t len = plat_load_pack_at(PACK_LEVEL_ID0 + k, PACK_LEVEL_CART, PACK_LEVEL_MAX);
 		if (len > 0 && pack_mount_at(1, plat_cart_ptr(PACK_LEVEL_CART))) {
 			current = k;

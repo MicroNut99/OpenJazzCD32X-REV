@@ -24,7 +24,7 @@
         .equ    MD_CMD_COPY_FROM_CART, 24
         .equ    MD_CMD_COPY_WORDS, 25
         .equ    MD_CMD_SAFE_CART_XFER, 26
-        .equ    MD_CMD_END, 41              /* KOBO K19: + set_vdp_reg (34); D32X M1: + start_d32xr (35);
+        .equ    MD_CMD_END, 42              /* KOBO K19: + set_vdp_reg (34); D32X M1: + start_d32xr (35);
                                                ledger: set_vsram (36); REV: genbg_* (37-40) */
 
 
@@ -308,6 +308,7 @@ cmd_table:
         .word   genbg_start - cmd_table         /* 38  REV: the plane shown, follows the camera */
         .word   genbg_off - cmd_table           /* 39  REV: off */
         .word   genbg_cell - cmd_table          /* 40  REV: a tile of the map changed */
+        .word   rv_copy_fast - cmd_table        /* 41  R7: cart <-> Word RAM, 48 bytes a movem (RV = 1) */
 
 | D32X M1: void start_d32xr(void) - never returns.
 | D32XR's ROM is in the RAM cart.  Interrupts off, cart bank 0, RV off (the SH2 must reach the
@@ -1488,6 +1489,39 @@ exc_buf:
         .space  48
 
         .include "genbg_md.s"
+
+        .align  4
+| R7: void rv_copy_fast(src, dst, len) - as safe_cart_xfer_w (routine 27: interrupts off,
+| RV = 1, words), but 48 bytes per movem pair: about 1.3 MB/s instead of 0.5. For the cart's
+| compressed packs (main.c CMD 69): the packed bytes into Word RAM, the unpacked ones out of
+| it. len even; the last bytes below 48 go a word at a time.
+rv_copy_fast:
+        movem.l d2-d7/a2-a6,-(sp)
+        movea.l 48(sp),a0               /* src */
+        movea.l 52(sp),a1               /* dst */
+        move.l  56(sp),d0               /* len */
+        move.w  sr,-(sp)
+        move.w  #0x2700,sr
+        bset    #0,0xA15107
+1:
+        cmpi.l  #48,d0
+        blo.b   2f
+        movem.l (a0)+,d1-d7/a2-a6
+        movem.l d1-d7/a2-a6,(a1)
+        lea     48(a1),a1
+        subi.l  #48,d0
+        bra.b   1b
+2:
+        subq.l  #2,d0
+        bmi.b   3f
+        move.w  (a0)+,(a1)+
+        bra.b   2b
+3:
+        bclr    #0,0xA15107
+        move.w  (sp)+,sr
+        movem.l (sp)+,d2-d7/a2-a6
+        moveq   #0,d0
+        rts
 
         .align  4
 md_init_end:

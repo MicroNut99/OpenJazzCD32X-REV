@@ -31,6 +31,7 @@
 
 #include "mars/font3x5.h"
 
+static int loading_up;     /* the loading screen is on: a second pack of the same load keeps it */
 static int fill_running;   /* FILL: the boot's copying shows the splash, not the loading screen */
 
 /* ------------------------------------------------------------ registers */
@@ -878,6 +879,7 @@ void plat_present(const uint8_t *pixels, int pitch, const uint16_t *palette555)
 {
 	genbg_hide();
 	stack_guard_check();
+	loading_up = 0;                          /* the game's picture: a load shows the loading screen again */
 	write_game_line_table();
 
 	volatile uint32_t *dst = FB32 + (FB_PIX_WORD * 2) / 4;
@@ -922,6 +924,7 @@ int plat_back_index(void) { return VDP_FBCTL & FBCTL_FS; }
 void plat_present_scroll(const uint16_t *palette555, int row0, int xoff, int viewH)
 {
 	stack_guard_check();
+	loading_up = 0;                          /* the game's picture: a load shows the loading screen again */
 	for (int line = 0; line < 256; line++)
 	{
 		const int g = line - PLAT_TOP_BORDER;
@@ -981,6 +984,7 @@ void plat_present_canvas(const uint16_t *palette555)
 {
 	genbg_hide();
 	stack_guard_check();
+	loading_up = 0;                          /* the game's picture: a load shows the loading screen again */
 	write_game_line_table();
 	present_finish(FB32 + (FB_PIX_WORD * 2 + PLAT_GAME_H * PLAT_SCREEN_W) / 4, palette555);
 }
@@ -1291,7 +1295,8 @@ static void give_fb(void)
 
 static void loading_screen(void)
 {
-	if (fill_running) return;
+	if (fill_running || loading_up) return;
+	loading_up = 1;
 	MARS_COMM2 = 0;
 	if (!send_cmd(CMD_OPEN_FILE, 2000000UL)) return;
 	uint32_t len = MARS_COMM8_32;
@@ -1359,6 +1364,32 @@ static int save_depth, save_page;
 
 int plat_cart_page_now(void) { return page_now; }
 
+#define CMD_DISC_STAMP 70
+uint32_t plat_disc_stamp(void)
+{
+	static int known;
+	static uint32_t stamp;
+	if (!known) {
+		MARS_COMM8_32 = 0;
+		if (send_cmd(CMD_DISC_STAMP, 2000000UL)) stamp = MARS_COMM8_32;
+		known = 1;
+	}
+	return stamp;
+}
+
+#define CMD_UNPACK 69
+uint32_t plat_unpack(int src_page, uint32_t src_cart, int dst_page, uint32_t dst_cart)
+{
+	MARS_COMM2 = (uint16_t)(src_page | dst_page << 8);
+	MARS_COMM8_32 = src_cart;
+	MARS_COMM12 = (uint16_t)(dst_cart >> 15);
+	const int done = send_cmd(CMD_UNPACK, 2000000UL);
+	page_now = dst_page;                     /* window 1 shows the destination now */
+	*(volatile uint8_t *)0xFFFFFE92 = 0x11;   /* purge: the 68000 wrote the cart */
+	if (!done) { plat_log("UNPACK: COMMAND TIMED OUT"); return 0; }
+	return MARS_COMM12 == 0 ? MARS_COMM8_32 : 0;
+}
+
 int plat_cart_page(int page)
 {
 	if (page < 1 || page > 7) return 0;
@@ -1419,7 +1450,10 @@ int plat_pack_same_as_disc(int id, uint32_t cart_offset, uint32_t len)
 	if (open_at(id, cart_offset) != (int32_t)len) return 0;
 	const uint32_t chunks = (len + 32767) >> 15;
 	const uint32_t probe[2] = { 0, chunks - 1 };
-	for (int i = 0; i < 2; i++)
+	/* R7: a compressed pack starts with every block's packed length: a changed pack changes them,
+	 * so its first 32 KB are enough (one seek less when a world is entered) */
+	const int probes = id >= PACK_LEVEL_ID0 + PACK_LZ_ADD || chunks == 1 ? 1 : 2;
+	for (int i = 0; i < probes; i++)
 	{
 		MARS_COMM2 = (uint16_t)probe[i];
 		MARS_COMM8_32 = len;

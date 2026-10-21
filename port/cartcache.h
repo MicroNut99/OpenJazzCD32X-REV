@@ -22,6 +22,9 @@ int cartcache_world(int world_id, int gb_id, uint32_t *world_off, uint32_t *gb_o
 
 /* FILL: the packs of the list that are not in the cart yet, into pages with room (the first
  * boot); progress(i, n) nonzero stops it. Returns the number copied. */
+/* R7: something other than cartcache_world wrote the home slot (a pack loaded there) */
+void cartcache_home_changed(void);
+
 int cartcache_fill(const int *ids, const int *gb_ids, int n, int (*progress)(int done, int total));
 
 #ifdef __cplusplus

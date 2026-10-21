@@ -130,6 +130,14 @@ memory. Each planet is loaded once, when you reach it, and both of its levels pl
 The CD drive delivers about 30 KB/s through this path, so a planet takes 30-45 seconds; the
 loading time is mostly spent between the chunks of data, not in reading them.
 
+### The 8 MB and 16 MB carts (R8)
+
+With a bigger RAM cart (`CART=8` / `CART=16` builds) the first start also copies the worlds into
+the cart, compressed to about a third of their size: 27 of the 41 worlds fit in 16 MB. The splash
+shows "COPYING TO THE CART - START: SKIP"; Start stops the copying. A world in the cart starts in
+about 6 seconds (3 of them unpacking); a world not in the cart loads from the disc in about 13
+seconds and is then kept in the cart. Details: `docs/R8_COMPRESSED_PACKS.md`.
+
 
 ## Controls
 

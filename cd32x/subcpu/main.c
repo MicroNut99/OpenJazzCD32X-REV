@@ -130,6 +130,48 @@ static int md_cmd4_p(int c, int a, int b, int d, int e) { send_md_cmd4(c, a, b, 
 #define do_md_cmd2 md_cmd2_p
 #define do_md_cmd3 md_cmd3_pumping
 #define do_md_cmd4 md_cmd4_p
+/* R7: the disc's root directory read once and kept: opening a file (CMD 38) took about 0.7 s
+   (the BIOS reads the directory from the disc every time), now no disc read. A name not found
+   here goes to the BIOS as before. */
+static uint8_t dir_buf[24 * 2048] __attribute__((aligned(4)));
+static int dir_len = -1;
+static uint32_t disc_stamp;      /* R7: the disc's build (a hash of the volume's creation time) */
+static uint32_t le32(const uint8_t *p) { return p[0] | p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
+static void cd_dir_load(void)
+{
+    if (dir_len < 0) {
+        dir_len = 0;
+        scd_sub_read(dir_buf, 16, 1);                              /* the volume descriptor */
+        if (dir_buf[1] == 'C' && dir_buf[2] == 'D' && dir_buf[3] == '0' && dir_buf[4] == '0' && dir_buf[5] == '1') {
+            /* R7: every build of the disc gets a new creation time (bytes 813-829): the stamp the
+               cart pages note beside each pack, so a pack copied from this disc needs no disc
+               compare later (CMD 70) */
+            uint32_t h = 2166136261u;
+            for (int k = 813; k < 830; k++) h = (h ^ dir_buf[k]) * 16777619u;
+            disc_stamp = h ? h : 1;
+            const uint32_t lba = le32(dir_buf + 156 + 2), len = le32(dir_buf + 156 + 10);
+            if (len > 0 && len <= sizeof dir_buf) {
+                scd_sub_read(dir_buf, (int)lba, (int)((len + 2047) / 2048));
+                dir_len = (int)len;
+            }
+        }
+    }
+}
+static int64_t cd_open(const char *name)
+{
+    cd_dir_load();
+    const int nl = (int)strlen(name);
+    for (int p = 0; p < dir_len; ) {
+        const uint8_t *e = dir_buf + p;
+        if (e[0] == 0) { p = (p / 2048 + 1) * 2048; continue; }   /* the rest of this sector is empty */
+        const int l = e[32];
+        if (!(e[25] & 2) && l >= nl && memcmp(e + 33, name, (size_t)nl) == 0 && (l == nl || e[33 + nl] == ';'))
+            return (int64_t)le32(e + 10) << 32 | le32(e + 2);
+        p += e[0];
+    }
+    return scd_open_file(name);
+}
+
 static void cd_chunk_read(uint8_t *dst, int lba, int n, int file_end)
 {
     int k = 0;
@@ -196,6 +238,7 @@ extern int do_md_cmd3(int cmd, int arg1, int arg2, int arg3);
 #define MD_CMD_GENBG_START    38         /* REV: shown, following the camera (x << 16 | y) */
 #define MD_CMD_GENBG_OFF      39         /* REV: off, the listener's own VDP set-up back */
 #define MD_CMD_GENBG_CELL     40         /* REV: a map tile changed (cell << 16 | tile) */
+#define MD_CMD_RV_COPY_FAST   41         /* R7: cart <-> Word RAM with movem (hw_md.s rv_copy_fast) */
 /* KOBO K19: hw_md.s set_vdp_reg - one VDP register word */
 
 /* KOBO K19 - GREEN DIAGNOSTIC TEXT.  1 = printed as before (C on the pad shows/hides it).
@@ -283,6 +326,204 @@ static void cart_page_write(int page)
     switch_banks();                                /* Word RAM -> 68000 (0x200000) */
     do_md_cmd3(MD_CMD_SAFE_CART_XFER, 0x200000, 0xA130F2, 1);   /* ledger section 7: routine 26 (interrupts off, RV = 1) */
     switch_banks();
+}
+
+/* R7 - CMD 69 "unpack" (OpenJazz docs/R7_COMPRESSED_PACKS.md): a compressed pack (tools/ojlz.c:
+   "OJLZ", the unpacked length, the blocks' packed lengths, then blocks that unpack to 32 KB
+   each, standing alone) from one cart page into another, both through window 1:
+     COMM2 = source page | destination page << 8, COMM8L = the source's cart address (window 1:
+     0x200000-0x3FFFFF), COMM12 = the destination's cart address / 32 KB.
+   Reply: COMM8L = the unpacked length (0: failed), COMM12 = 0 done, 1 not a compressed pack.
+   Window 1 shows the destination page afterwards. Per two blocks the 68000 copies the packed
+   bytes from the cart into Word RAM (routine 27: words, interrupts off, RV = 1), the Sub-CPU
+   unpacks them into the same bank (lz4_block), and the 68000 copies the 64 KB into the cart. */
+extern void lz4_block(const void *src, int len, void *dst);
+__asm__(
+    "       .text\n"
+    "       .align  2\n"
+    "       .globl  lz4_block\n"
+    "lz4_block:\n"                             /* (src, len, dst): one block (offsets < 32 KB) */
+    "       movem.l %d2-%d5/%a2-%a3,-(%sp)\n"
+    "       movea.l 28(%sp),%a0\n"
+    "       move.l  32(%sp),%d0\n"
+    "       movea.l 36(%sp),%a1\n"
+    "       lea     0(%a0,%d0.l),%a2\n"
+    "       moveq   #63,%d4\n"
+    "1:     dbra    %d4,0f\n"                   /* every 64 tokens: keep the 68000 busy (md_service) */
+    "       moveq   #63,%d4\n"
+    "       movem.l %d0-%d3/%a0-%a3,-(%sp)\n"
+    "       jsr     md_service\n"
+    "       movem.l (%sp)+,%d0-%d3/%a0-%a3\n"
+    "0:     moveq   #0,%d1\n"
+    "       move.b  (%a0)+,%d1\n"
+    "       move.w  %d1,%d2\n"
+    "       lsr.w   #4,%d2\n"
+    "       beq.b   5f\n"
+    "       cmpi.w  #15,%d2\n"
+    "       bne.b   3f\n"
+    "2:     moveq   #0,%d3\n"
+    "       move.b  (%a0)+,%d3\n"
+    "       add.w   %d3,%d2\n"
+    "       cmpi.b  #-1,%d3\n"
+    "       beq.b   2b\n"
+    "       move.w  %a0,%d0\n"                   /* a long literal run: words when a0, a1 share parity */
+    "       move.w  %a1,%d3\n"
+    "       eor.w   %d3,%d0\n"
+    "       btst    #0,%d0\n"
+    "       bne.b   3f\n"
+    "       btst    #0,%d3\n"
+    "       beq.b   20f\n"
+    "       move.b  (%a0)+,(%a1)+\n"
+    "       subq.w  #1,%d2\n"
+    "20:    move.w  %d2,%d0\n"
+    "       lsr.w   #2,%d0\n"
+    "       subq.w  #1,%d0\n"
+    "21:    move.l  (%a0)+,(%a1)+\n"
+    "       dbra    %d0,21b\n"
+    "       andi.w  #3,%d2\n"
+    "       beq.b   5f\n"
+    "3:     subq.w  #1,%d2\n"
+    "30:    move.b  (%a0)+,(%a1)+\n"
+    "       dbra    %d2,30b\n"
+    "5:     cmpa.l  %a2,%a0\n"
+    "       bhs.w   9f\n"
+    "       move.b  1(%a0),-(%sp)\n"            /* offset, little-endian: the high byte through the stack */
+    "       move.w  (%sp)+,%d5\n"
+    "       move.b  (%a0),%d5\n"
+    "       addq.l  #2,%a0\n"
+    "       movea.l %a1,%a3\n"
+    "       suba.w  %d5,%a3\n"
+    "       andi.w  #15,%d1\n"
+    "       cmpi.w  #15,%d1\n"
+    "       bne.b   7f\n"
+    "6:     moveq   #0,%d2\n"
+    "       move.b  (%a0)+,%d2\n"
+    "       add.w   %d2,%d1\n"
+    "       cmpi.b  #-1,%d2\n"
+    "       beq.b   6b\n"
+    "       btst    #0,%d5\n"                    /* a long match, even offset >= 4: longs */
+    "       bne.b   7f\n"
+    "       cmpi.w  #4,%d5\n"
+    "       blo.b   7f\n"
+    "       addq.w  #4,%d1\n"
+    "       move.w  %a1,%d0\n"
+    "       btst    #0,%d0\n"
+    "       beq.b   60f\n"
+    "       move.b  (%a3)+,(%a1)+\n"
+    "       subq.w  #1,%d1\n"
+    "60:    move.w  %d1,%d0\n"
+    "       lsr.w   #2,%d0\n"
+    "       subq.w  #1,%d0\n"
+    "61:    move.l  (%a3)+,(%a1)+\n"
+    "       dbra    %d0,61b\n"
+    "       andi.w  #3,%d1\n"
+    "       beq.w   1b\n"
+    "       subq.w  #1,%d1\n"
+    "62:    move.b  (%a3)+,(%a1)+\n"
+    "       dbra    %d1,62b\n"
+    "       bra.w   1b\n"
+    "7:     move.b  (%a3)+,(%a1)+\n"            /* a match is 4 bytes at least */
+    "       move.b  (%a3)+,(%a1)+\n"
+    "       move.b  (%a3)+,(%a1)+\n"
+    "       move.b  (%a3)+,(%a1)+\n"
+    "       subq.w  #1,%d1\n"
+    "       bmi.w   1b\n"
+    "70:    move.b  (%a3)+,(%a1)+\n"
+    "       dbra    %d1,70b\n"
+    "       bra.w   1b\n"
+    "9:     movem.l (%sp)+,%d2-%d5/%a2-%a3\n"
+    "       rts\n"
+);
+#define UNPACK_IN   0x0C0000                   /* Sub-CPU side of a bank: the packed blocks */
+#define UNPACK_OUT  0x0D0000                   /* and two unpacked blocks (64 KB) */
+/* The 68000's part runs beside the Sub-CPU's: a queue of 68000 commands, sent one after the other
+   while the Sub-CPU unpacks (md_service between blocks). The page register byte comes from the
+   fourth argument register (0xA1202C, the byte the 68000 copies), so a page change needs no
+   Word RAM and no bank switch. */
+typedef struct { int cmd, a1, a2, a3, a4; } MdJob;
+static MdJob md_q[32];                          /* a batch queues up to 12 */
+static int md_qh, md_qt, md_busy;
+static void md_push(int cmd, int a1, int a2, int a3, int a4)
+{
+    MdJob *j = &md_q[md_qt++ & 31];
+    j->cmd = cmd; j->a1 = a1; j->a2 = a2; j->a3 = a3; j->a4 = a4;
+}
+void md_service(void);
+void md_service(void)
+{
+    if (md_busy) {
+        if (read_byte(0xFF800E)) return;               /* the 68000 is still on it */
+        wait_md_cmd();
+        md_busy = 0;
+    }
+    if (md_qh != md_qt) {
+        const MdJob *j = &md_q[md_qh++ & 31];
+        send_md_cmd4(j->cmd, j->a1, j->a2, j->a3, j->a4);
+        md_busy = 1;
+    }
+}
+static void md_drain(void) { while (md_busy || md_qh != md_qt) md_service(); }
+static void md_page(int page) { md_push(MD_CMD_SAFE_CART_XFER, 0xA1202C, 0xA130F2, 1, page << 24); }
+static void md_copy(uint32_t src, uint32_t dst, uint32_t len)   /* 16 KB per command */
+{
+    for (uint32_t p = 0; p < len; p += 0x4000)
+        md_push(MD_CMD_RV_COPY_FAST, (int)(src + p), (int)(dst + p), (int)(len - p < 0x4000 ? len - p : 0x4000), 0);
+}
+static uint32_t unpack_pack(int spage, int dpage, uint32_t src, uint32_t dst)
+{
+    static uint16_t sizes[128];
+    /* the header */
+    md_page(spage);
+    md_copy(0x400000 + src, 0x200000, 512);
+    md_drain();
+    switch_banks();
+    const volatile uint8_t *h = (const volatile uint8_t *)UNPACK_IN;
+    if (h[0] != 'O' || h[1] != 'J' || h[2] != 'L' || h[3] != 'Z') { md_page(dpage); md_drain(); return 0; }
+    const uint32_t raw = (uint32_t)h[4] << 24 | (uint32_t)h[5] << 16 | (uint32_t)h[6] << 8 | h[7];
+    const int nb = h[8] << 8 | h[9];
+    if (nb < 1 || nb > 128 || 12 + 2 * nb > 512) { md_page(dpage); md_drain(); return 0; }
+    for (int b = 0; b < nb; b++) sizes[b] = (uint16_t)(h[12 + 2 * b] << 8 | h[13 + 2 * b]);
+    /* batches: one or two blocks, their packed bytes 64 KB at most */
+    static int bfirst[129];
+    static uint32_t bat[129];
+    int nbatch = 0;
+    uint32_t at = src + 12 + 2 * (uint32_t)nb;
+    for (int b = 0; b < nb; ) {
+        int e = b + 1;
+        uint32_t len = (sizes[b] + 1u) & ~1u;
+        if (e < nb && len + ((sizes[e] + 1u) & ~1u) <= 0x10000) len += (sizes[e++] + 1u) & ~1u;
+        bfirst[nbatch] = b; bat[nbatch] = at; nbatch++;
+        at += len; b = e;
+    }
+    bfirst[nbatch] = nb; bat[nbatch] = at;
+    /* batch 0's packed bytes into the 68000's bank, then the bank to the Sub-CPU */
+    md_page(spage);
+    md_copy(0x400000 + bat[0], 0x200000, bat[1] - bat[0]);
+    md_drain();
+    switch_banks();
+    uint32_t out = dst, prev_n = 0;
+    for (int i = 0; i < nbatch; i++) {
+        /* the 68000, in its bank: the last batch's unpacked bytes out, the next batch's packed in */
+        if (i > 0) { md_page(dpage); md_copy(0x210000, 0x400000 + out, (prev_n + 1) & ~1u); out += prev_n; }
+        if (i + 1 < nbatch) { md_page(spage); md_copy(0x400000 + bat[i + 1], 0x200000, bat[i + 2] - bat[i + 1]); }
+        md_service();
+        /* the Sub-CPU, in its bank: this batch */
+        uint32_t in = UNPACK_IN, n = 0;
+        for (int k = bfirst[i]; k < bfirst[i + 1]; k++) {
+            const uint32_t braw = (uint32_t)(k + 1) * 32768u <= raw ? 32768u : raw - (uint32_t)k * 32768u;
+            lz4_block((const void *)in, sizes[k], (void *)(UNPACK_OUT + n));
+            md_service();
+            in += (sizes[k] + 1u) & ~1u;
+            n += braw;
+        }
+        md_drain();
+        switch_banks();
+        prev_n = n;
+    }
+    md_page(dpage);
+    md_copy(0x210000, 0x400000 + out, (prev_n + 1) & ~1u);
+    md_drain();
+    return raw;
 }
 #endif
 
@@ -786,6 +1027,14 @@ int main(void)
                 sprintf(img_name, "GB%03d.PAK", img_idx - 1200);
                 cur_img = 4;                                /* cart 4 * 128 KB = 0x080000 (free up to 0x100000) */
             }
+            else if (img_idx >= 2200 && img_idx < 3200) {  /* R7: a world / bonus pack compressed, OZ<n-2200>.PAK (tools/ojlz.c) */
+                sprintf(img_name, "OZ%03d.PAK", img_idx - 2200);
+                cur_img = 20;
+            }
+            else if (img_idx >= 3200 && img_idx < 4200) {  /* R7: a Genesis plane pack compressed, GZ<n-3200>.PAK */
+                sprintf(img_name, "GZ%03d.PAK", img_idx - 3200);
+                cur_img = 4;
+            }
             else if (img_idx <= 0) strcpy(img_name, "IMAGE.RAW");
             else sprintf(img_name, "IMAGE%d.RAW", img_idx);
 #ifdef CART_PAGED
@@ -801,7 +1050,7 @@ int main(void)
                 print_diag(temp, tbuf, 2, 12);
             }
 
-            int64_t file_info = scd_open_file(img_name);
+            int64_t file_info = cd_open(img_name);   /* R7: from the cached directory */
             if (file_info < 0) {
                 sprintf(tbuf, "ERR: %s NOT FOUND          ", img_name);
                 print_diag(temp, tbuf, 2, 12);
@@ -1088,6 +1337,25 @@ int main(void)
             sprintf(tbuf, "CART PAGE %d %s              ", page, ok ? "SET" : "REFUSED");
             print_diag(temp, tbuf, 2, 15);
             do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA1512C, ok);
+            do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA15120, 0);
+        }
+        else if (cmd == 70) {
+            /* R7: the disc's stamp (cd_open above) -> COMM8L; 0: unknown */
+            cd_dir_load();
+            do_md_cmd2(MD_CMD_WRITE_32X_32, 0xA15128, (int)disc_stamp);
+            do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA15120, 0);
+        }
+        else if (cmd == 69) {
+            /* R7: unpack a compressed pack from one cart page into another (unpack_pack above) */
+            const int pages = do_md_cmd1(MD_CMD_READ_32X_16, 0xA15122);
+            const uint32_t src = (uint32_t)do_md_cmd1(MD_CMD_READ_32X_32, 0xA15128) & 0x3FFFFEu;
+            const uint32_t dst = ((uint32_t)do_md_cmd1(MD_CMD_READ_32X_16, 0xA1512C) & 0x7F) << 15;
+            const int sp = pages & 7, dp = (pages >> 8) & 7;
+            uint32_t raw = 0;
+            if (sp >= 1 && dp >= 1 && src >= 0x200000 && dst >= 0x200000)
+                raw = unpack_pack(sp, dp, src, dst);
+            do_md_cmd2(MD_CMD_WRITE_32X_32, 0xA15128, (int)raw);
+            do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA1512C, raw ? 0 : 1);
             do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA15120, 0);
         }
 #endif

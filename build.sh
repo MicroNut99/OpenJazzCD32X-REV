@@ -108,6 +108,19 @@ if [ -f "$HH95/PANEL.000" ]; then
   python3 "$HERE/tools/genesis_pack.py" "$GB_DUMPS/hh95" "$ROMS" 100
 fi
 rm -rf "$GB_DUMPS"
+# R8: the 8 / 16 MB builds keep compressed copies of the world, bonus and Genesis plane packs
+# in the cart (docs/R8_COMPRESSED_PACKS.md): OZ<k>.PAK / GZ<k>.PAK beside them on the disc
+rm -f "$ROMS"/OZ*.PAK "$ROMS"/GZ*.PAK
+if [ -n "$CART" ]; then
+  echo "==> compressed packs (tools/ojlz.c)"
+  mkdir -p "$HERE/build"
+  gcc -O2 -o "$HERE/build/ojlz" "$HERE/tools/ojlz.c"
+  for f in "$ROMS"/OJ*.PAK "$ROMS"/GB*.PAK; do
+    b=$(basename "$f"); z="$ROMS/$(echo "$b" | sed 's/^OJ/OZ/; s/^GB/GZ/')"
+    "$HERE/build/ojlz" "$f" "$z"
+  done
+  echo "    $(ls "$ROMS"/OJ*.PAK "$ROMS"/GB*.PAK | xargs cat | wc -c) bytes -> $(ls "$ROMS"/OZ*.PAK "$ROMS"/GZ*.PAK | xargs cat | wc -c)"
+fi
 # music - WAVs in music/ (named like the game's music files, tools/music_tracks.txt)
 MUSIC_WAVS=$(ls "$HERE"/music/*.wav "$HERE"/music/*.WAV 2>/dev/null | wc -l)
 # NOMUSIC=1: a disc without the music (one silent audio track, the engine plays none) - small, for emulators

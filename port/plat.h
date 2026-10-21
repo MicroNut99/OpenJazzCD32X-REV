@@ -204,6 +204,13 @@ int plat_cart_page_now(void);
 int32_t plat_pack_open(int id);
 int32_t plat_load_pack_at(int id, uint32_t cart_offset, uint32_t max_bytes);
 int plat_pack_same_as_disc(int id, uint32_t cart_offset, uint32_t len);
+/* R7: unpack a compressed pack (tools/ojlz.c) at src_cart (window 1, page src_page) to dst_cart
+ * (window 1, page dst_page, a multiple of 32 KB); window 1 shows dst_page afterwards. Returns
+ * the unpacked length, 0 on failure (Sub-CPU command 69). */
+uint32_t plat_unpack(int src_page, uint32_t src_cart, int dst_page, uint32_t dst_cart);
+/* R7: the disc's build stamp (Sub-CPU command 70: a hash of the volume's creation time), 0 if
+ * unknown. The cart pages note it beside each pack: a pack from this disc needs no disc compare. */
+uint32_t plat_disc_stamp(void);
 int plat_cart_piece_write(int piece, const uint16_t *words, int n);
 void plat_cart_piece_read(int piece, uint16_t *words, int n);
 void plat_save_area_enter(void);
