@@ -1322,3 +1322,8 @@ int plat_hh95_available(void) { return 1; }
 static int host_port_set[8] = { 1 };
 int plat_port_setting(int key) { return key >= 0 && key < 8 ? host_port_set[key] : 0; }
 void plat_port_setting_set(int key, int value) { if (key >= 0 && key < 8) host_port_set[key] = value; }
+
+/* R9: the bonus floor needs the Sega CD's graphics chip: the PC build draws the floor itself */
+int plat_bonusmd_load(const void *file, int hole, uint16_t hole555) { (void)file; (void)hole; (void)hole555; return 0; }
+int plat_bonusmd_frame(int32_t x, int32_t y, int cs, int sn, int step) { (void)x; (void)y; (void)cs; (void)sn; (void)step; return 0; }
+void plat_bonusmd_off(void) { }

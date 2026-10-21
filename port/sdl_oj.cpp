@@ -1034,7 +1034,7 @@ void oj32x_level_pack(const char *levelFile)
 	{
 		uint32_t woff, goff;
 		pack_mount_at(1, nullptr);
-		const int gb_id = k < PACK_BONUS_K ? PACK_GENESIS_ID0 + k : 0;
+		const int gb_id = PACK_GENESIS_ID0 + k;   /* R9: a bonus map's has its floor (GB8nn) */
 		if (cartcache_world(PACK_LEVEL_ID0 + k, gb_id, &woff, &goff)) {
 			if (pack_mount_at(1, plat_cart_ptr(woff))) {
 				current = k;
@@ -1063,8 +1063,9 @@ void oj32x_level_pack(const char *levelFile)
 		snprintf(msg, sizeof msg, "LEVEL PACK OJ%03d.PAK", k);
 		plat_log(msg);
 		/* REV: the world's Genesis plane files (GB<k>.PAK, port/genbg.h); worlds the Genesis
-		 * does not draw have none - their levels stay the 32X's */
-		if (k < PACK_BONUS_K) {
+		 * does not draw have none - their levels stay the 32X's. R9: a bonus map's has its
+		 * floor for the graphics chip (BONUSMD.BIN) */
+		{
 			const int32_t glen = plat_load_pack(PACK_GENESIS_ID0 + k, PACK_GENESIS_CART, PACK_GENESIS_MAX);
 			if (glen > 0 && pack_mount_at(2, plat_cart_ptr(PACK_GENESIS_CART))) {
 				snprintf(msg, sizeof msg, "GENESIS PACK GB%03d.PAK", k);
@@ -1076,6 +1077,37 @@ void oj32x_level_pack(const char *levelFile)
 		current = -1;
 	}
 }
+
+/* R9: the bonus floor (port/oj32x.h, docs/R9_BONUS_FLOOR.md) */
+int oj32x_bonusmd_start(void)
+{
+	const uint8_t *data;
+	uint32_t size;
+	if (!pack_file("BONUSMD.BIN", &data, &size) || size < 1024 + 65536 || memcmp(data, "OJBM", 4) != 0) {
+		plat_log("BONUS FLOOR: NO BONUSMD.BIN - THE 32X DRAWS IT");
+		return -1;
+	}
+	const int hole = data[8] << 8 | data[9];
+	if ((data[4] << 8 | data[5]) != 2) {
+		plat_log("BONUS FLOOR: BONUSMD.BIN IS NOT VERSION 2 - THE 32X DRAWS IT");
+		return -1;
+	}
+	/* the hole's colour on the 32X (15-bit BGR) from the file's 8-bit RGB */
+	const uint16_t c555 = (uint16_t)((data[76] >> 3) | (data[77] >> 3) << 5 | (data[78] >> 3) << 10);
+	if (!plat_bonusmd_load(data, hole, c555)) {
+		plat_log("BONUS FLOOR: NOT LOADED - THE 32X DRAWS IT");
+		return -1;
+	}
+	plat_log("BONUS FLOOR: ON THE GENESIS");
+	return hole;
+}
+
+bool oj32x_bonusmd_frame(int x, int y, int cs, int sn, int step)
+{
+	return plat_bonusmd_frame(x, y, cs, sn, step) != 0;
+}
+
+void oj32x_bonusmd_stop(void) { plat_bonusmd_off(); }
 
 void oj32x_packs_ready(void) { plat_packs_ready(); }
 

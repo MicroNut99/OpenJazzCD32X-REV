@@ -140,6 +140,8 @@ class RotatePaletteEffect : public PaletteEffect {
 		RotatePaletteEffect (unsigned char newFirst, int newAmount, fixed newSpeed, PaletteEffect* nextPE);
 
 		void apply (SDL_Color* shownPalette, bool direct, int mspf, bool isStatic) override;
+		/// PORT32X R9: the rotation's step (0 .. amount - 1), for the bonus floor's stamps
+		int step () const { return FTOI(position) % amount; }
 
 };
 

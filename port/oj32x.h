@@ -48,6 +48,12 @@ void oj32x_clear_screens(void);
 /* bring the world or bonus pack for a level, planet or bonus file into the cart (a loading
  * screen on the 32X; nothing happens when it is already there) */
 void oj32x_level_pack(const char *levelFile);
+/* R9: the bonus level's floor on the Sega CD's graphics chip (docs/R9_BONUS_FLOOR.md).
+ * start: BONUSMD.BIN of the bonus map's Genesis pack; returns the 32X palette index to fill the
+ * floor's area with, or -1 (the 32X draws the floor as before). frame: false = draw it on the 32X. */
+int  oj32x_bonusmd_start(void);
+bool oj32x_bonusmd_frame(int x, int y, int cs, int sn, int step);
+void oj32x_bonusmd_stop(void);
 
 /* a sound effect (32X: Sega CD PCM chip; PC: nothing) */
 void oj32x_sfx(int id);
