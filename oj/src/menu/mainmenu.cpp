@@ -27,6 +27,7 @@
 #include "plasma.h"
 #ifdef OJ32X
 #include "credits32x.h"
+#include "oj32x.h"
 #endif
 
 #include "game/game.h"
@@ -254,6 +255,36 @@ int MainMenu::select (int option) {
 }
 
 
+
+#ifdef OJ32X_MARS
+/**
+ * PORT32X R10: the demo MACRO.<macro + 1> plays a level whose world is in the cart already.
+ * A demo file: type (0xFFFF: a normal level), level, world, difficulty, then the pad.
+ */
+static bool demoInCart (int macro) {
+
+	char *fileName = createString("MACRO.1");
+	fileName[6] += macro;
+	bool ok = false;
+
+	if (File::exists(fileName, PATH_TYPE_GAME)) {
+		FilePtr file = std::make_unique<File>(fileName, PATH_TYPE_GAME);
+		if (file->loadShort() != 0) {
+			int lNum = file->loadShort(9);
+			int wNum = file->loadShort(999);
+			char *levelFile = createFileName("LEVEL", lNum, wNum);
+			ok = oj32x_level_in_cart(levelFile);
+			delete[] levelFile;
+		}
+	}
+
+	delete[] fileName;
+	return ok;
+
+}
+#endif
+
+
 /**
  * Run the main menu.
  *
@@ -289,13 +320,7 @@ int MainMenu::run () {
 	for (macro = 0; macro < 4; macro++) {
 		macroType[macro] = -1;
 
-#if defined(OJ32X_MARS) && !defined(OJ32X_DEMO)
-		// PORT32X: no demos on the 32X (the recordings are not loaded, so the menu never
-		// starts one); a build with -DOJ32X_DEMO has them
-		if (false) {
-#else
 		if (File::exists(fileName, PATH_TYPE_GAME)) {
-#endif
 			FilePtr file = std::make_unique<File>(fileName, PATH_TYPE_GAME);
 			macroType[macro] = file->loadChar();
 		}
@@ -396,8 +421,15 @@ int MainMenu::run () {
 				x = macro;
 				macro = (macro + 1) & 3;
 
+#ifdef OJ32X_MARS
+				// PORT32X R10: only a demo whose level is in the cart already (copied at the
+				// first boot, or played before): a demo never loads from the disc
+				while (((macroType[macro] != 0xFF) || !demoInCart(macro)) && (macro != x))
+					macro = (macro + 1) & 3;
+#else
 				while ((macroType[macro] != 0xFF) && (macro != x))
 					macro = (macro + 1) & 3;
+#endif
 
 				if (macro != x) {
 

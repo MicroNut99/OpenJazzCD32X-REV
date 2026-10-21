@@ -27,6 +27,9 @@ void cartcache_home_changed(void);
 
 int cartcache_fill(const int *ids, const int *gb_ids, int n, int (*progress)(int done, int total));
 
+/* R10: the world pack is in the cart already (a page, or unpacked in the home slot) */
+int cartcache_has(int world_id);
+
 #ifdef __cplusplus
 }
 #endif

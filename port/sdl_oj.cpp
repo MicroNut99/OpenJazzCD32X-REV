@@ -997,15 +997,14 @@ void oj32x_parallel(void (*fn)(void *, int), void *arg)
 
 /* The pack a level, planet or bonus file needs (disc file OJ<k>.PAK, see port/pack.h):
  * world packs k = world * 10 (+ 100 for Holiday Hare '95), bonus packs k = 800 + map. */
-void oj32x_level_pack(const char *levelFile)
+/* the pack number k (OJ<k>.PAK) a level, planet or bonus map file is in; -1: none */
+static int level_pack_k(const char *levelFile)
 {
-	static int current = -1;
 	const char *b = levelFile;
 	for (const char *p = levelFile; *p; ++p)
 		if (*p == '/' || *p == '\\') b = p + 1;
 	/* one pack per WORLD (planet): both levels of a planet, its tiles, sprites and planet
-	 * screen - k = world * 10. A level of the same world as the pack already in the cart needs
-	 * no loading at all; the planet screen (PLANET.www) loads its world's pack first. */
+	 * screen - k = world * 10 */
 	int k;
 	auto world_of = [](const char *ext) -> int {
 		if (!isdigit((unsigned char)ext[0]) || !isdigit((unsigned char)ext[1]) || !isdigit((unsigned char)ext[2])) return -1;
@@ -1018,9 +1017,35 @@ void oj32x_level_pack(const char *levelFile)
 	} else if (strncasecmp(b, "LEVEL", 5) == 0 && isdigit((unsigned char)b[5]) && b[6] == '.' && world_of(b + 7) >= 0) {
 		k = world_of(b + 7) * 10;
 	} else {
-		return;
+		return -1;
 	}
 	if (plat_game() == 1 && k != PACK_BONUS_K) k += 100;   /* Holiday Hare '95's packs (OJ6xx) */
+	return k;
+}
+
+/* R10: the level file's world is already in the cart (copied at the first boot or played
+ * before): starting it reads nothing from the disc. The menu's demos play only such levels. */
+bool oj32x_level_in_cart(const char *levelFile)
+{
+#if OJ32X_CART_MB
+	const int k = level_pack_k(levelFile);
+	return k >= 0 && cartcache_has(PACK_LEVEL_ID0 + k);
+#else
+	(void)levelFile;
+	return false;                          /* the 4 MB cart holds one world: none waits there */
+#endif
+}
+
+void oj32x_level_pack(const char *levelFile)
+{
+	static int current = -1;
+	const char *b = levelFile;
+	for (const char *p = levelFile; *p; ++p)
+		if (*p == '/' || *p == '\\') b = p + 1;
+	/* A level of the same world as the pack already in the cart needs no loading at all; the
+	 * planet screen (PLANET.www) loads its world's pack first. */
+	const int k = level_pack_k(levelFile);
+	if (k < 0) return;
 	if (k == current) return;
 	{
 		char msg[40];

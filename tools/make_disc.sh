@@ -9,15 +9,15 @@
 set -u
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 # CART=8 / CART=16 - the paged cart's test builds (docs/CART_8MB_16MB.md); their default
-# name is R9-8MB / R9-16MB (R7: the frame rate work, docs/R7_FRAME_RATE.md; R8: compressed
+# name is R10-8MB / R10-16MB (R7: the frame rate work, docs/R7_FRAME_RATE.md; R8: compressed
 # packs in the cart, docs/R8_COMPRESSED_PACKS.md; R9: the bonus floor on the Sega CD,
-# docs/R9_BONUS_FLOOR.md)
+# docs/R9_BONUS_FLOOR.md; R10: the menu's demos again)
 # WSL sets NAME to the computer's name in every shell: that NAME is not a build name
 [ "${NAME:-}" = "$(hostname)" ] && NAME=""
-if [ -n "${CART:-}" ]; then NAME="${NAME:-R9-${CART}MB}"; export CART; fi
+if [ -n "${CART:-}" ]; then NAME="${NAME:-R10-${CART}MB}"; export CART; fi
 [ -n "${NOMUSIC:-}" ] && export NOMUSIC
 # PROF=1: the frame profiler box in levels; the name gets -PROF
-if [ -n "${PROF:-}" ]; then export PROF; NAME="${NAME:-R9${CART:+-${CART}MB}}-PROF"; fi
+if [ -n "${PROF:-}" ]; then export PROF; NAME="${NAME:-R10${CART:+-${CART}MB}}-PROF"; fi
 NAME="${NAME:-R1}"
 DISCS="$HERE/discs/$NAME"
 

@@ -145,6 +145,13 @@ the Genesis; the 32X draws only the sky, the horizon, the sprites and the panel.
 pictures a second (20 on six maps that need two layers for their colours), where the 32X alone
 managed 2-3. Details: `docs/R9_BONUS_FLOOR.md`.
 
+### Demos (R10)
+
+Left alone for 20 seconds, the main menu plays the game's demos again (MACRO.2-4: episode 1,
+worlds 1 and 2). A demo only plays when its world is already in the cart (copied at the first
+boot or played before), so it never loads from the disc; with the 4 MB cart, or when the first
+boot's copying was skipped, the menu just waits.
+
 
 ## Controls
 

@@ -337,4 +337,15 @@ int cartcache_fill(const int *ids, const int *gb_ids, int n, int (*progress)(int
 	return copied;
 }
 
+/* R10: the world pack is in the cart (a cache page, or the home slot unpacked) */
+int cartcache_has(int world_id)
+{
+	if (cartcache_pages() <= 2) return 0;
+	if (world_id == home_world) return 1;
+	const int id = world_id + (OJ32X_CART_LZ ? PACK_LZ_ADD : 0);
+	for (int p = 2; p < pages; p++)
+		if (find(p, id)) return 1;
+	return 0;
+}
+
 #endif
