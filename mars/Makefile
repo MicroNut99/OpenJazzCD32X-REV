@@ -38,8 +38,11 @@ PORT_CXX := sdl_oj.cpp mars_boottest.cpp
 PORT_C   := cart.c pack.c plat_mars.c mars_syscalls.c genbg.c cartcache.c
 
 # R5: CART=8 / CART=16 - the paged cart's test builds (docs/CART_8MB_16MB.md), objects of their own
-OBJDIR := obj$(if $(CART),_cart$(CART))$(if $(PROF),_prof)
-DEFS_CART := $(if $(CART),-DOJ32X_CART_MB=$(CART)) $(if $(PROF),-DOJ32X_PROFILE)
+# R11: LZ=1 - the world packs compressed in the cart (R8, docs/R8_COMPRESSED_PACKS.md); default
+# off: the cart keeps them as on the disc (R7's way)
+LZ ?= 0
+OBJDIR := obj$(if $(CART),_cart$(CART))$(if $(filter 1,$(LZ)),_lz)$(if $(PROF),_prof)
+DEFS_CART := $(if $(CART),-DOJ32X_CART_MB=$(CART) -DOJ32X_CART_LZ=$(if $(filter 1,$(LZ)),1,0)) $(if $(PROF),-DOJ32X_PROFILE)
 OPT    := $(ARCH) -Os -ffunction-sections -fdata-sections
 DEFS   := -DOJ32X -DOJ32X_MARS -DOJ_SDL1 -DPORTABLE -DNDEBUG \
           -DOJ_VERSION=\"git-oj32x\" -DOJ_DATE=\"2026-10-06\" -D__32X__ -DMARS \

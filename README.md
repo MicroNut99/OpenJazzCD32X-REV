@@ -152,6 +152,13 @@ worlds 1 and 2). A demo only plays when its world is already in the cart (copied
 boot or played before), so it never loads from the disc; with the 4 MB cart, or when the first
 boot's copying was skipped, the menu just waits.
 
+### No compression by default (R11)
+
+The 8 / 16 MB builds keep the world packs in the cart as they are on the disc again (R7's
+way: about ten worlds copied on the first boot, no unpacking when one starts). `LZ=1` builds
+R8's compressed version (27 worlds, the disc name gets `-LZ`). Later boots no longer show
+"COPYING TO THE CART" when there is nothing to copy.
+
 
 ## Controls
 

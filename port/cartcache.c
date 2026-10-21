@@ -309,7 +309,6 @@ int cartcache_fill(const int *ids, const int *gb_ids, int n, int (*progress)(int
 		tail_write(p);
 	}
 	for (int i = 0; i < n; i++) {
-		if (progress && progress(i, n)) break;
 		const int id = ids[i] + (OJ32X_CART_LZ ? PACK_LZ_ADD : 0);   /* R7: the compressed copies */
 		int there = 0;
 		for (int p = 2; p < pages && !there; p++) there = find(p, id) != NULL;
@@ -323,6 +322,9 @@ int cartcache_fill(const int *ids, const int *gb_ids, int n, int (*progress)(int
 		for (int p = 2; p < pages && best < 0; p++)
 			if (PAGE_ROOM - pg[p].used >= need && pg[p].n + 2 <= MAX_ENTRIES) best = p;
 		if (best < 0) break;                        /* full: the rest load when they are played */
+		/* R11: the copying screen only for a pack that is copied - a later boot, with the cart
+		 * as full as it gets, shows nothing */
+		if (progress && progress(i, n)) break;
 		plat_cart_page(best);
 		const int first = pg[best].n;
 		const uint32_t at = pg[best].used;
