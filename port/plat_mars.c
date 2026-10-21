@@ -39,8 +39,15 @@
 #define MARS_COMM2       (*(volatile uint16_t *)0x20004022)
 #define MARS_COMM4       (*(volatile uint16_t *)0x20004024)   /* REV: camera x for the 68000's Genesis plane */
 #define MARS_COMM6       (*(volatile uint16_t *)0x20004026)   /* REV: camera y, fade, hide (port/genbg.h) */
-#define MARS_COMM8       (*(volatile uint16_t *)0x20004028)
-#define MARS_COMM10      (*(volatile uint16_t *)0x2000402A)
+/* R7: COMM8 / COMM10 carry the answer to a pad request sent ahead (pad_ask): every other use
+ * waits for that answer first, so it cannot land on an argument written here or be read as a
+ * result (the RAW_ names are for the pad's own answer) */
+#define RAW_COMM8        (*(volatile uint16_t *)0x20004028)
+static void pad_collect(uint32_t tries);
+static inline volatile uint16_t *comm16_settled(uintptr_t a) { pad_collect(40000UL); return (volatile uint16_t *)a; }
+static inline volatile uint32_t *comm32_settled(uintptr_t a) { pad_collect(40000UL); return (volatile uint32_t *)a; }
+#define MARS_COMM8       (*comm16_settled(0x20004028))
+#define MARS_COMM10      (*comm16_settled(0x2000402A))
 #define MARS_COMM12      (*(volatile uint16_t *)0x2000402C)
 #define VDP_DISPMODE     (*(volatile uint16_t *)0x20004100)
 #define VDP_FBCTL        (*(volatile uint16_t *)0x2000410A)
@@ -112,7 +119,7 @@
 #define PACK_SLOT        8       /* IMAGE8.RAW -> cart 8 * 128 KB = 0x100000 = PLAT_CART_DATA_OFFSET */
 #define CMD_CHUNK_TO_FB  51      /* main.c: file chunk -> frame buffer (the loader's splash) */
 #define CMD_LOAD_SFX     53      /* main.c: SFX<COMM2>.BIN -> PCM chip; COMM12 = number of effects */
-#define MARS_COMM8_32    (*(volatile uint32_t *)0x20004028)
+#define MARS_COMM8_32    (*comm32_settled(0x20004028))
 #define CMD_TEXT_ONOFF   52
 
 #define PPHI_HZ          23011364u
@@ -272,8 +279,6 @@ static void comm_pause(void)
 	bus_rest(128);  /* R7: was a volatile counter on the stack: a write to SDRAM every turn */
 }
 
-static void pad_collect(uint32_t tries);
-
 static int send_cmd(uint16_t cmd, uint32_t tries)
 {
 	pad_collect(40000UL);   /* R7: a pad request sent ahead must be answered first */
@@ -293,7 +298,7 @@ static uint16_t pad_value;
 
 static void pad_take(void)
 {
-	const uint16_t bits = MARS_COMM8;
+	const uint16_t bits = RAW_COMM8;
 	pad_value = (bits & 0xF000) == 0xF000 ? 0 : (uint16_t)(bits & 0x0FFF);
 }
 
@@ -314,6 +319,9 @@ static void pad_collect(uint32_t tries)
 		comm_pause();
 	if (MARS_COMM0 == 0) pad_take();
 }
+
+/* R7: for code that writes the 32X communication registers itself */
+void plat_comm_settle(void) { pad_collect(40000UL); }
 
 static void take_fb(void)
 {
