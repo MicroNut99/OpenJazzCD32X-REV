@@ -1,7 +1,7 @@
 # 8 MB and 16 MB cart releases (design)
 
 The design for Jazz Jackrabbit CD32X on the paged SRAM cart
-([16MB-PCB-CD32X](https://github.com/MicroNut99/16MB-PCB-CD32X), rev 0.5: 16 MB with both chips,
+(the 16MB-PCB-CD32X board, rev 0.5: 16 MB with both chips,
 8 MB with U1 only). Jazz is the reference: Hurrican CD32X uses the same mechanism, with its own
 numbers in its `docs/CART_8MB_16MB.md`.
 

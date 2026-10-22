@@ -1,6 +1,6 @@
 # R9: the bonus levels' floor on the Sega CD and the Genesis (21 Oct 2026)
 
-Measured in ares (MicroNut99/ares_android, branch `cd32x-bus-jh`, `ARES_32X_TIMING=console`),
+Measured in the ares emulator (`ARES_32X_TIMING=console`),
 not on the console. R9 = R8 + this. All three builds (4, 8, 16 MB).
 
 ## Before

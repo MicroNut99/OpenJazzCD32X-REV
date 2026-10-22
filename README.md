@@ -87,7 +87,7 @@ Genesis, and what did fit would still leave the 32X drawing much of the picture.
 
 - A Sega Genesis / Mega Drive with **Sega CD** and **32X**
 - A **4 MB RAM cart** in the 32X cartridge slot (the game keeps its data there)
-  - or the **8 MB / 16 MB cart** ([16MB-PCB-CD32X](https://github.com/MicroNut99/16MB-PCB-CD32X))
+  - or the **8 MB / 16 MB cart** (the 16MB-PCB-CD32X board)
     with the `CART=8` / `CART=16` disc (see *Building*)
 - The game disc, burned from `OpenJazzCD32X.cue` (disc-at-once, 80-minute CD-R)
 

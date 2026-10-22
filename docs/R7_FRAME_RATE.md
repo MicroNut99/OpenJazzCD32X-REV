@@ -1,6 +1,6 @@
 # R7: frame rate work (20 Oct 2026)
 
-Measured in ares (MicroNut99/ares_android, branch `cd32x-bus-jh`), not on the console. The
+Measured in the ares emulator, not on the console. The
 console readings so far were all taken before R7.
 
 ## What changed
@@ -16,8 +16,7 @@ console readings so far were all taken before R7.
 
 ## In ares (pictures shown per second)
 
-`ARES_32X_TIMING=console` is the ares cost set closest to the console readings (see the
-confidential repo, `ARES_VS_CONSOLE_TIMING.md`).
+`ARES_32X_TIMING=console` is the ares cost set closest to the console readings.
 
 | Place (01·1) | Console, R5 | ares upstream, R5 → R7 | ares `console`, R5 → R7 |
 |---|---|---|---|
