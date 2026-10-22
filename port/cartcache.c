@@ -286,7 +286,7 @@ int cartcache_world(int world_id, int gb_id, uint32_t *world_off, uint32_t *gb_o
  * into the first page with room for it (with its Genesis pack, gb_ids[i], 0: none), in the
  * list's order, until no page has room. Packs already there are not checked against the disc
  * here (cartcache_world does that when one is used), so after the first boot this costs only the
- * page tails read at the probe. progress(i, n) before each pack: nonzero stops the fill (the
+ * page tails read at the probe. progress(i, n) before each pack it copies: nonzero stops the fill (the
  * player pressed Start). Returns the number of packs copied. */
 int cartcache_fill(const int *ids, const int *gb_ids, int n, int (*progress)(int done, int total))
 {
