@@ -24,8 +24,7 @@ bit are in front of the Genesis, the sky's colours behind it.
 **First start of a REV disc: hold A + B + C** while switching on (full reload), so the new
 program replaces the one in the RAM cart.
 
-Build: `NAME=R1 bash tools/make_disc.sh` in this folder (WSL) - the disc goes to
-`discs/R1/OpenJazzCD32X_R1.cue` inside the folder.
+How to build the disc: see *Building* below.
 
 ## Why the "Sonic CD Rip and Tear" method works here
 
@@ -88,10 +87,53 @@ Genesis, and what did fit would still leave the 32X drawing much of the picture.
 
 - A Sega Genesis / Mega Drive with **Sega CD** and **32X**
 - A **4 MB RAM cart** in the 32X cartridge slot (the game keeps its data there)
+  - or the **8 MB / 16 MB cart** ([16MB-PCB-CD32X](https://github.com/MicroNut99/16MB-PCB-CD32X))
+    with the `CART=8` / `CART=16` disc (see *Building*)
 - The game disc, burned from `OpenJazzCD32X.cue` (disc-at-once, 80-minute CD-R)
 
 Emulators without a 4 MB RAM cart (for example Fusion) cannot run it: the loader stops on the
 splash screen.
+
+## Building
+
+**What the build needs** (Linux or WSL):
+- Chilly Willy's Sega toolchain in `/opt/toolchains/sega` (the SH2 and 68000 compilers), gcc,
+  Python 3 with numpy and Pillow (`sudo apt install python3-numpy python3-pil`).
+- The game files in `JazzJackRabbitGame/` inside this folder (`PANEL.000`, `BONUSMAP.000`,
+  `LEVEL0.000`, ... from Jazz Jackrabbit CD). Optional: `JAZZXMAS1995/` (Holiday Hare '95) and
+  the music as WAVs in `music/`. Both are copied from `../OpenJazzCD32X` when they are there.
+
+**The commands** - everything is made inside this folder, nothing outside it:
+
+| Cart | Command | The disc |
+|---|---|---|
+| 4 MB | `NAME=R1 bash tools/make_disc.sh` | `discs/R1/OpenJazzCD32X_R1.cue` |
+| 16 MB | `CART=16 bash tools/make_disc.sh` | `discs/R11-16MB/OpenJazzCD32X_R11-16MB.cue` |
+| 8 MB | `CART=8 bash tools/make_disc.sh` | `discs/R11-8MB/OpenJazzCD32X_R11-8MB.cue` |
+
+For example, from WSL:
+```
+cd /mnt/s/KoboPort/sega-toolchain-12.1/sega/OpenJazzCD32X-REV && \
+CART=16 bash tools/make_disc.sh
+```
+
+**Options** (put them before `bash`, as `CART=16` above):
+- `NOMUSIC=1` - a disc without the music (one silent audio track): smaller and quicker to make,
+  for emulators.
+- `LZ=1` - the 8 / 16 MB builds with the world packs compressed in the cart (R8: 27 worlds copied
+  on the first boot instead of about ten, a short unpacking when a world starts); the disc name
+  gets `-LZ`. Off by default.
+- `PROF=1` - the frame profiler box in levels; the disc name gets `-PROF`.
+- `NAME=...` - another disc name.
+
+**What happens:** the build makes the data packs (the common pack, a pack per world and per bonus
+map, the Genesis plane packs, the bonus floors), the engine, the loader and the Sub-CPU program,
+then the disc image. The full log goes to `build_log.txt`; the last lines and the path of the
+`.cue` are printed at the end. The first build takes a while (the packs are made by running the
+PC build through the levels); later builds keep the world packs.
+
+**Burn the `.cue`** (with its `.bin`, disc-at-once, 80-minute CD-R). The `.iso` alone has no
+music.
 
 ## Starting
 
