@@ -336,8 +336,14 @@ static int ed_page = 1;                            /* what window 1 shows (1 aft
    verifies because the read-back lands in the same wrong place.
    So an ED build does not ask for the byte at all.  It asks the listener for the four word writes
    directly, which go through its ordinary cart-write path (m1_cart -> m1_rvcpy -> m1_cpy_w: RV = 1,
-   W on for the write, words because source, destination and length are all even) - the operation
-   the probe proved.  Nothing in the stack changes; a 4 / 8 / 16 MB build is untouched. */
+   W on for the write) - the operation the probe proved.  Nothing in the stack changes; a 4 / 8 /
+   16 MB build is untouched.
+   The command is 27 (SAFE_CART_XFER_W), not 26: 26 asks the listener for BYTES, and the only thing
+   that would promote an all-even byte copy to words is OL_M1WORDS, which defaults to 0 and is not
+   passed when these launchers are built - so 26 would have written each register as two byte
+   writes, and an even-byte write to a CTRL register is precisely what the EverDrive ignores.  27
+   sets d3 = 1 in the listener, so m1_cpy makes one move.w per register.  A 2-byte length also
+   misses m1_page's interception, which wants exactly 1. */
 static void cart_page_write(int page)
 {
     volatile uint8_t *wr = (volatile uint8_t *)0x0C0000;
@@ -349,7 +355,7 @@ static void cart_page_write(int page)
             wr[0] = 0;                             /* the bank as a WORD, in Word RAM */
             wr[1] = (uint8_t)(page * 4 + k);       /* page p -> banks 4p..4p+3 */
             switch_banks();                        /* Word RAM -> 68000 (0x200000) */
-            do_md_cmd3(MD_CMD_SAFE_CART_XFER, 0x200000, 0xA130F8 + 2 * k, 2);
+            do_md_cmd3(MD_CMD_SAFE_CART_XFER_W, 0x200000, 0xA130F8 + 2 * k, 2);   /* 27: WORDS */
             switch_banks();
         }
     }
@@ -499,13 +505,13 @@ static void md_drain(void) { while (md_busy || md_qh != md_qt) md_service(); }
 #ifdef CART_ED
 /* ED-PAGE, the queued form: four word writes to CTRL4-7 instead of the one byte the EverDrive
    ignores.  send_md_cmd4 puts the 4th argument as a long at 0xA1202C, so bank << 16 leaves the bank
-   in the WORD there, and 0xA1202C is even - the listener copies it as a word. */
+   in the WORD there; command 27 makes the listener copy it as a word. */
 static void md_page(int page)
 {
     int k;
     ed_page = page;
     for (k = 0; k < 4; k++)
-        md_push(MD_CMD_SAFE_CART_XFER, 0xA1202C, 0xA130F8 + 2 * k, 2, (page * 4 + k) << 16);
+        md_push(MD_CMD_SAFE_CART_XFER_W, 0xA1202C, 0xA130F8 + 2 * k, 2, (page * 4 + k) << 16);   /* 27: WORDS */
 }
 #else
 static void md_page(int page) { ed_page = page; md_push(MD_CMD_SAFE_CART_XFER, 0xA1202C, 0xA130F2, 1, page << 24); }
@@ -1556,7 +1562,12 @@ int main(void)
         else if (cmd == 68) {
             /* R5: cart page for window 1 (COMM2 = 1-7). Reply COMM12 = 1 done, 0 refused. */
             int page = do_md_cmd1(MD_CMD_READ_32X_16, 0xA15122) & 0xFFFF;
+#ifdef CART_ED
+            int ok = page >= 1 && page <= 6;       /* ED: page 7 is the EverDrive's banks 28-31, and
+                                                      31 is its save bank - never hand it out */
+#else
             int ok = page >= 1 && page <= 7;
+#endif
             if (ok) cart_page_write(page);
             sprintf(tbuf, "CART PAGE %d %s              ", page, ok ? "SET" : "REFUSED");
             print_diag(temp, tbuf, 2, 15);
