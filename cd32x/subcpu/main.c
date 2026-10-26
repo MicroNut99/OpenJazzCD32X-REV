@@ -326,14 +326,39 @@ static uint32_t cur_dest = 0xFFFFFFFFu;
    (CMD 57).  The EverDrive wipes its PSRAM at its menu, so nothing in page 1 itself would outlive a
    relaunch (OpenLara CD32X EDSAVE-1; CD32X BootCamp docs/12). */
 static int ed_page = 1;                            /* what window 1 shows (1 after the boot) */
+/* ED-PAGE (26 Oct 2026, measured on the console with CD32X-BootCamp/edpage):
+   the EverDrive IGNORES the one even byte to 0xA130F2 that the 16MB-PCB cart's page register wants,
+   and TAKES a word write to CTRL4-7 (0xA130F8..FE = the four 512 KB windows of cart 0x200000-
+   0x3FFFFF).  The boot stack's listener is meant to translate that byte (MODE1-9, m1_page) and the
+   same probe showed m1_page itself working when called directly - but the EverDrive builds never
+   switched a page, which is why they loaded to completion and then found nothing where they put it:
+   with no switch every page's data goes to whatever was mapped at reset, and each chunk still
+   verifies because the read-back lands in the same wrong place.
+   So an ED build does not ask for the byte at all.  It asks the listener for the four word writes
+   directly, which go through its ordinary cart-write path (m1_cart -> m1_rvcpy -> m1_cpy_w: RV = 1,
+   W on for the write, words because source, destination and length are all even) - the operation
+   the probe proved.  Nothing in the stack changes; a 4 / 8 / 16 MB build is untouched. */
 static void cart_page_write(int page)
 {
     volatile uint8_t *wr = (volatile uint8_t *)0x0C0000;
     ed_page = page;
+#ifdef CART_ED
+    {
+        int k;
+        for (k = 0; k < 4; k++) {
+            wr[0] = 0;                             /* the bank as a WORD, in Word RAM */
+            wr[1] = (uint8_t)(page * 4 + k);       /* page p -> banks 4p..4p+3 */
+            switch_banks();                        /* Word RAM -> 68000 (0x200000) */
+            do_md_cmd3(MD_CMD_SAFE_CART_XFER, 0x200000, 0xA130F8 + 2 * k, 2);
+            switch_banks();
+        }
+    }
+#else
     wr[0] = (uint8_t)page;                         /* the byte, in Word RAM */
     switch_banks();                                /* Word RAM -> 68000 (0x200000) */
     do_md_cmd3(MD_CMD_SAFE_CART_XFER, 0x200000, 0xA130F2, 1);   /* ledger section 7: routine 26 (interrupts off, RV = 1) */
     switch_banks();
+#endif
 }
 
 /* R7 - CMD 69 "unpack" (OpenJazz docs/R7_COMPRESSED_PACKS.md): a compressed pack (tools/ojlz.c:
@@ -471,7 +496,20 @@ void md_service(void)
     }
 }
 static void md_drain(void) { while (md_busy || md_qh != md_qt) md_service(); }
+#ifdef CART_ED
+/* ED-PAGE, the queued form: four word writes to CTRL4-7 instead of the one byte the EverDrive
+   ignores.  send_md_cmd4 puts the 4th argument as a long at 0xA1202C, so bank << 16 leaves the bank
+   in the WORD there, and 0xA1202C is even - the listener copies it as a word. */
+static void md_page(int page)
+{
+    int k;
+    ed_page = page;
+    for (k = 0; k < 4; k++)
+        md_push(MD_CMD_SAFE_CART_XFER, 0xA1202C, 0xA130F8 + 2 * k, 2, (page * 4 + k) << 16);
+}
+#else
 static void md_page(int page) { ed_page = page; md_push(MD_CMD_SAFE_CART_XFER, 0xA1202C, 0xA130F2, 1, page << 24); }
+#endif
 
 static void md_copy(uint32_t src, uint32_t dst, uint32_t len)   /* 16 KB per command */
 {
