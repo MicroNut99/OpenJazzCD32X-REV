@@ -22,13 +22,13 @@ mkdir -p "$ROMS"
 # and CMD 38's destination. Unset: the 4 MB REV build, unchanged.
 # ED: CART=ED - the Mega EverDrive PRO as the 16 MB paged cart (CD32X BootCamp docs/12; the listener's
 # MODE1-9 turns the page writes into its window registers; pages 1-6 - page 7 is the EverDrive's own).
-#   CART=ED EDCD=1 bash build.sh      the disc + cd32x/subcpu/EDCD_JAZZ.32X, the launcher started from the
+#   CART=ED EDCD=1 bash build.sh      OpenJazzCD32X_EDCD_OPENJAZZ + cd32x/subcpu/EDCD_OPENJAZZ.32X, the launcher started from the
 #                                     EverDrive menu with the disc in the Sega CD (BOOTCAMP=<folder>,
 #                                     default ../CD32X-BootCamp)
 #   EDCD_DIAG=1                       (with EDCD=1) the launcher with the Sub-CPU's green text on
 #   EDCD_SAVE=1                       (with EDCD=1) ED-SAVE: page 1's save area (the settings, the saves,
 #                                     the port's settings, page 1's cache record) in the EverDrive's save
-#                                     bank, kept on the SD card as MEGA/gamedata/EDCD_JAZZ.32X/bram.srm -
+#                                     bank, kept on the SD card as MEGA/gamedata/EDCD_OPENJAZZ.32X/bram.srm -
 #                                     the launcher's program (CART_EDSAVE, listener M1SAVE=1, RA header);
 #                                     the disc is the same either way (the game asks the Sub-CPU, CMD 62)
 # Without EDCD_SAVE the saves go to the cart's page 1, which the EverDrive wipes at its menu.
@@ -177,19 +177,32 @@ import sys, wave
 w = wave.open(sys.argv[1], "wb"); w.setnchannels(2); w.setsampwidth(2); w.setframerate(44100)
 w.writeframes(b"\0" * 44100 * 4 * 2); w.close()
 PY
+# The names (MicroNut99's rule, 26 Oct 2026: every new .32X and bin/cue carries a unique EDCD tag, and
+# the disc names the launcher it belongs with - the EverDrive keeps each launcher's saves under its own
+# name).  An EverDrive build is OpenJazzCD32X_EDCD_OPENJAZZ + EDCD_OPENJAZZ.32X ("OPENJAZZ" to match
+# EDCD_OPENLARA, not the "JAZZ" this used before); the 8 / 16 MB test discs keep the names they were
+# built under.  DISC_NAME overrides it - NOT NAME, which WSL fills with the Windows machine's name.
+EDCD_GAME="OPENJAZZ"
+EDCD_32X="EDCD_$EDCD_GAME.32X"
+if [ "$CART" = ED ]; then
+  DISC_NAME="${DISC_NAME:-OpenJazzCD32X_EDCD_$EDCD_GAME}"
+else
+  DISC_NAME="${DISC_NAME:-OpenJazzCD32X${CART:+_cart$CART}}"
+fi
+
 if [ "$MUSIC_WAVS" -gt 0 ]; then
   echo "==> music: $MUSIC_WAVS WAVs -> CD audio tracks"
   rm -rf "$HERE/cd32x/subcpu/soundtrack_cd"
   python3 "$HERE/tools/make_music_tracks.py" "$HERE/tools/music_tracks.txt" "$HERE/music" "$HERE/cd32x/subcpu/soundtrack_cd"
-  cd "$HERE/cd32x/subcpu" && python3 make_mixed_cd2.py CDROMPlayer.iso soundtrack_cd/Track*.wav --out "OpenJazzCD32X${CART:+_cart$CART}"
+  cd "$HERE/cd32x/subcpu" && python3 make_mixed_cd2.py CDROMPlayer.iso soundtrack_cd/Track*.wav --out "$DISC_NAME"
 else
   echo "==> no music/*.wav: one silent audio track (the engine plays no music)"
-  cd "$HERE/cd32x/subcpu" && python3 make_mixed_cd2.py CDROMPlayer.iso silence.wav --out "OpenJazzCD32X${CART:+_cart$CART}"
+  cd "$HERE/cd32x/subcpu" && python3 make_mixed_cd2.py CDROMPlayer.iso silence.wav --out "$DISC_NAME"
 fi
 echo
 echo "==> done:"
-echo "    emulator: cd32x/subcpu/OpenJazzCD32X.cue (with its .bin)"
-echo "    burn:     cd32x/subcpu/OpenJazzCD32X.cue, or the plain cd32x/subcpu/CDROMPlayer.iso"
+echo "    emulator: cd32x/subcpu/$DISC_NAME.cue (with its .bin)"
+echo "    burn:     cd32x/subcpu/$DISC_NAME.cue, or the plain cd32x/subcpu/CDROMPlayer.iso"
 
 # EDCD=1 (MODE1-1, CD32X BootCamp docs/12): EDCD.32X, made by the BootCamp's edboot/build_edcd.sh around
 # this disc's Sub-CPU program built a second time for the cartridge boot (MODE1=1 M1PAGE=1, in a copy
@@ -197,14 +210,14 @@ echo "    burn:     cd32x/subcpu/OpenJazzCD32X.cue, or the plain cd32x/subcpu/CD
 if [ "${EDCD:-0}" = 1 ]; then
   BC="${BOOTCAMP:-$HERE/../CD32X-BootCamp}"
   [ -f "$BC/edboot/build_edcd.sh" ] || { echo "*** EDCD=1 needs the CD32X BootCamp next to this folder (or BOOTCAMP=<folder>): not at $BC"; exit 1; }
-  echo "==> EDCD_JAZZ.32X: the disc started from the EverDrive PRO (cartridge boot)"
+  echo "==> $EDCD_32X: the disc started from the EverDrive PRO (cartridge boot)"
   T=$(mktemp -d); mkdir -p "$T/subcpu/ROMS" "$T/sh2"
   find "$HERE/cd32x/subcpu" -maxdepth 1 -type f -exec cp {} "$T/subcpu/" \;
   cp "$HERE/cd32x/sh2/CDLOADER.32x" "$T/sh2/"
   ( cd "$T/subcpu" && make clean > /dev/null && make CDROMPlayer.bin MODE1=1 M1CTRL0=0x8000 M1PAGE=1 ${EDCD_SAVE:+M1SAVE=$EDCD_SAVE} CART_DEFS="$CART_DEFS${EDCD_SAVE:+ -DCART_EDSAVE}" ${EDCD_DIAG:+DIAG=$EDCD_DIAG} > "$T/mode1.log" 2>&1 ) \
     || { tail -20 "$T/mode1.log"; echo "*** the MODE1 Sub-CPU program did not build"; exit 1; }
-  bash "$BC/edboot/build_edcd.sh" "$T/subcpu/CDROMPlayer.bin" "$HERE/cd32x/sh2/CDLOADER.32x" "$HERE/cd32x/subcpu/EDCD_JAZZ.32X"
+  bash "$BC/edboot/build_edcd.sh" "$T/subcpu/CDROMPlayer.bin" "$HERE/cd32x/sh2/CDLOADER.32x" "$HERE/cd32x/subcpu/$EDCD_32X"
   rm -rf "$T"
-  echo "==> EDCD_JAZZ.32X: $HERE/cd32x/subcpu/EDCD_JAZZ.32X - copy it to the EverDrive's SD card and start it from the menu"
+  echo "==> $EDCD_32X: $HERE/cd32x/subcpu/$EDCD_32X - copy it to the EverDrive's SD card and start it from the menu"
   echo "    with the disc above in the Sega CD (not \"Run Mega-CD\")"
 fi
