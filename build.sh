@@ -176,10 +176,10 @@ if [ "$MUSIC_WAVS" -gt 0 ]; then
   echo "==> music: $MUSIC_WAVS WAVs -> CD audio tracks"
   rm -rf "$HERE/cd32x/subcpu/soundtrack_cd"
   python3 "$HERE/tools/make_music_tracks.py" "$HERE/tools/music_tracks.txt" "$HERE/music" "$HERE/cd32x/subcpu/soundtrack_cd"
-  cd "$HERE/cd32x/subcpu" && python3 make_mixed_cd2.py CDROMPlayer.iso soundtrack_cd/Track*.wav --out OpenJazzCD32X
+  cd "$HERE/cd32x/subcpu" && python3 make_mixed_cd2.py CDROMPlayer.iso soundtrack_cd/Track*.wav --out "OpenJazzCD32X${CART:+_cart$CART}"
 else
   echo "==> no music/*.wav: one silent audio track (the engine plays no music)"
-  cd "$HERE/cd32x/subcpu" && python3 make_mixed_cd2.py CDROMPlayer.iso silence.wav --out OpenJazzCD32X
+  cd "$HERE/cd32x/subcpu" && python3 make_mixed_cd2.py CDROMPlayer.iso silence.wav --out "OpenJazzCD32X${CART:+_cart$CART}"
 fi
 echo
 echo "==> done:"
