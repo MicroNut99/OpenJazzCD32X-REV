@@ -1416,6 +1416,11 @@ int32_t plat_load_pack(int id, uint32_t cart_offset, uint32_t max_bytes)
 
 void plat_packs_ready(void) { }
 
+/* ED-SAVE (below): page 1's save area read through the Sub-CPU when it is in the EverDrive's save bank */
+static int ed_save_bank(void);
+static void ed_fetch(int piece);
+static uint8_t ed_buf[4096];
+static int ed_piece = -1;                /* the piece in ed_buf */
 #if OJ32X_CART_MB
 /* ---- R5: the 8 / 16 MB cart (port/plat.h, port/cartcache.c, docs/CART_8MB_16MB.md) ---- */
 #define CMD_CART_PAGE 68
@@ -1532,11 +1537,17 @@ int plat_cart_piece_write(int piece, const uint16_t *words, int n)
 	MARS_COMM12 = 0;
 	send_cmd_rv(CMD_SAVE_PIECE_RAW, 8000000UL);
 	*(volatile uint8_t *)0xFFFFFE92 = 0x11;
+	ed_piece = -1;                                   /* ED-SAVE: the Sub-CPU's buffer is ours now */
 	return MARS_COMM12 != 0;
 }
 
 void plat_cart_piece_read(int piece, uint16_t *words, int n)
 {
+	if (page_now == 1 && ed_save_bank()) {           /* ED-SAVE: page 1's pieces are in the bank */
+		ed_fetch(piece);
+		for (int i = 0; i < n; i++) words[i] = (uint16_t)(ed_buf[2 * i] << 8 | ed_buf[2 * i + 1]);
+		return;
+	}
 	const volatile uint8_t *p = (const volatile uint8_t *)(0x223F0000u + (uint32_t)piece * 4096u);
 	for (int i = 0; i < n; i++) words[i] = (uint16_t)(p[2 * i] << 8 | p[2 * i + 1]);
 }
@@ -1556,6 +1567,54 @@ void plat_save_area_leave(void)
 #define SAVE_AREA_ENTER() ((void)0)
 #define SAVE_AREA_LEAVE() ((void)0)
 #endif
+
+/* ---- ED-SAVE: page 1's save area in the EverDrive's save bank (cd32x/subcpu/main.c CMD 61/62,
+ * CART_EDSAVE).  The SH2 cannot see that bank, so with page 1 in window 1 every read of the area
+ * goes through the Sub-CPU: CMD 62 brings a 4 KB piece into its buffer (kept here until a write),
+ * CMD 57 hands out the words.  The Sub-CPU says once (CMD 62, COMM2 = 0x8000) whether it works
+ * that way (0x200): the disc's own program says no and the area is read from the cart as before. */
+#define CMD_SAVE_GET  57
+#define CMD_SAVE_IN   62
+static int ed_bank = -1;                 /* -1 not asked, 0 the cart, 1 the EverDrive's save bank */
+static int ed_save_bank(void)
+{
+	if (ed_bank < 0) {
+#if OJ32X_CART_MB
+		MARS_COMM2 = 0x8000;                 /* the paged Sub-CPU programs answer CMD 62 */
+		MARS_COMM12 = 0;
+		ed_bank = send_cmd(CMD_SAVE_IN, 2000000UL) && (MARS_COMM12 & 0x200) ? 1 : 0;
+#else
+		ed_bank = 0;                         /* the 4 MB disc's program has no CMD 62: the cart */
+#endif
+	}
+	return ed_bank;
+}
+static void ed_fetch(int piece)
+{
+	if (piece == ed_piece) return;
+	MARS_COMM2 = (uint16_t)piece;
+	if (!send_cmd_rv(CMD_SAVE_IN, 2000000UL)) { plat_log("SAVE BANK: PIECE TIMED OUT"); return; }
+	for (int i = 0; i < 2048; i++) {
+		MARS_COMM2 = (uint16_t)i;
+		send_cmd(CMD_SAVE_GET, 400000UL);
+		const uint16_t w = MARS_COMM8;
+		ed_buf[2 * i] = (uint8_t)(w >> 8);
+		ed_buf[2 * i + 1] = (uint8_t)w;
+	}
+	ed_piece = piece;
+}
+/* n bytes at off of save-area piece <piece> (page 1 mapped by the caller: SAVE_AREA_ENTER) */
+void plat_save_read(int piece, int off, uint8_t *dst, int n)
+{
+	if (ed_save_bank()) {
+		ed_fetch(piece);
+		for (int i = 0; i < n; i++) dst[i] = ed_buf[off + i];
+		return;
+	}
+	const volatile uint8_t *p = (const volatile uint8_t *)(0x223F0000u + (uint32_t)piece * 4096u + (uint32_t)off);
+	for (int i = 0; i < n; i++) dst[i] = p[i];
+}
+
 
 /* ---- REV: the Genesis plane (port/genbg.h): Sub-CPU command 67 -> the 68000 (genbg_md.s).
  * COMM2 = what, COMM8/10 = its argument, reply COMM12. A load copies the level's file from the
@@ -1673,6 +1732,7 @@ int plat_save_piece(int piece)
 	send_cmd_rv(CMD_SAVE_PIECE, 8000000UL);
 	const int ok = MARS_COMM12 != 0;
 	*(volatile uint8_t *)0xFFFFFE92 = 0x11;   /* purge: the 68000 wrote the cart */
+	ed_piece = -1;                             /* ED-SAVE: the Sub-CPU's buffer is ours now */
 	SAVE_AREA_LEAVE();
 	if (!ok) { plat_log("SAVE: WRITING THE CART SAVE AREA FAILED"); return 0; }
 	return 1;
@@ -1683,9 +1743,10 @@ int plat_save_piece(int piece)
 #define PORT_SET_PIECE 10
 int plat_port_setting(int key)
 {
-	const volatile uint8_t *p = (const volatile uint8_t *)(0x223F0000u + PORT_SET_PIECE * 4096u);
+	uint8_t p[12];
 	if (key < 0 || key > 7) return 0;
 	SAVE_AREA_ENTER();
+	plat_save_read(PORT_SET_PIECE, 0, p, 12);        /* ED-SAVE: through the bank when it is there */
 	int v;
 	if (p[0] != 'O' || p[1] != 'J' || p[2] != 'P' || p[3] != 'S')
 		v = key == 0 ? 1 : 0;           /* nothing saved yet - the FPS counter starts on */

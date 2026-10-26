@@ -109,12 +109,13 @@ static int piece_of(const char *path)
 	return -1;
 }
 
-static const volatile uint8_t *piece_at(int piece) { return SAVE_AREA + piece * PIECE_BYTES; }
+void plat_save_read(int piece, int off, uint8_t *dst, int n);   /* plat_mars.c: the cart, or the EverDrive's save bank (ED-SAVE) */
 
 /* size of a stored file, -1 if the piece does not hold that file */
 static int piece_size(int piece, const char *path)
 {
-	const volatile uint8_t *p = piece_at(piece);
+	uint8_t p[PIECE_HEAD];
+	plat_save_read(piece, 0, p, PIECE_HEAD);
 	if (p[0] != 'O' || p[1] != 'J' || p[2] != 'S' || p[3] != 'F') return -1;
 	char n[12];
 	base_name(path, n);
@@ -190,9 +191,8 @@ int _read(int fd, char *buf, int len)
 	int n = d->size - d->pos;
 	if (n > len) n = len;
 	if (n < 0) n = 0;
-	const volatile uint8_t *p = piece_at(d->piece) + PIECE_HEAD + d->pos;
 	SAVE_AREA_ENTER();
-	for (int i = 0; i < n; i++) buf[i] = (char)p[i];
+	plat_save_read(d->piece, PIECE_HEAD + d->pos, (uint8_t *)buf, n);
 	SAVE_AREA_LEAVE();
 	d->pos += n;
 	return n;

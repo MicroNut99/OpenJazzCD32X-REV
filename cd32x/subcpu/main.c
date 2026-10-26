@@ -319,9 +319,17 @@ static int cur_img = 0;
    safe_cart_xfer (routine 26: interrupts off, RV = 1), one even byte to 0xA130F2, as the ledger's
    section 7 registers it - no listener change). */
 static uint32_t cur_dest = 0xFFFFFFFFu;
+/* ED-SAVE (CART_EDSAVE, the EverDrive launcher's program only - build.sh EDCD_SAVE=1): page 1's save
+   area (pieces 0-15, cart 0x3F0000 + piece * 4 KB) lives in the EverDrive's save bank instead - bank 31,
+   kept on the SD card - which the listener (MODE1-7, M1SAVE=1) reaches as cart 0x800000: CMD 61 writes
+   it there while window 1 shows page 1, CMD 62 brings a piece of it into the 4 KB buffer for the SH2
+   (CMD 57).  The EverDrive wipes its PSRAM at its menu, so nothing in page 1 itself would outlive a
+   relaunch (OpenLara CD32X EDSAVE-1; CD32X BootCamp docs/12). */
+static int ed_page = 1;                            /* what window 1 shows (1 after the boot) */
 static void cart_page_write(int page)
 {
     volatile uint8_t *wr = (volatile uint8_t *)0x0C0000;
+    ed_page = page;
     wr[0] = (uint8_t)page;                         /* the byte, in Word RAM */
     switch_banks();                                /* Word RAM -> 68000 (0x200000) */
     do_md_cmd3(MD_CMD_SAFE_CART_XFER, 0x200000, 0xA130F2, 1);   /* ledger section 7: routine 26 (interrupts off, RV = 1) */
@@ -463,7 +471,7 @@ void md_service(void)
     }
 }
 static void md_drain(void) { while (md_busy || md_qh != md_qt) md_service(); }
-static void md_page(int page) { md_push(MD_CMD_SAFE_CART_XFER, 0xA1202C, 0xA130F2, 1, page << 24); }
+static void md_page(int page) { ed_page = page; md_push(MD_CMD_SAFE_CART_XFER, 0xA1202C, 0xA130F2, 1, page << 24); }
 
 static void md_copy(uint32_t src, uint32_t dst, uint32_t len)   /* 16 KB per command */
 {
@@ -1548,18 +1556,54 @@ int main(void)
             volatile uint8_t *wr = (volatile uint8_t *)0x0C0000;
             for (k = 0; k < 4096; k++) wr[k] = bram_buf[k];
             switch_banks();
-            do_md_cmd3(MD_CMD_CHILLY_RV_MEMCPY, 0x400000 + coff, 0x200000, 4096);
-            do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA15104, (int)(coff >> 20) & 3);
-            do_md_cmd3(MD_CMD_CHILLY_MEMCPY, 0x208000, 0x900000 + (coff & 0xFFFFF), 4096);
+#ifdef CART_EDSAVE
+            if (ed_page == 1) {
+                /* ED-SAVE: into the EverDrive's save bank and back out of it (the listener's window-1
+                   route: RV = 1, the write bit on for the write only) */
+                do_md_cmd3(MD_CMD_CHILLY_RV_MEMCPY, 0x800000 + (uint32_t)piece * 4096, 0x200000, 4096);
+                do_md_cmd3(MD_CMD_CHILLY_RV_MEMCPY, 0x208000, 0x800000 + (uint32_t)piece * 4096, 4096);
+            } else
+#endif
+            {
+                do_md_cmd3(MD_CMD_CHILLY_RV_MEMCPY, 0x400000 + coff, 0x200000, 4096);
+                do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA15104, (int)(coff >> 20) & 3);
+                do_md_cmd3(MD_CMD_CHILLY_MEMCPY, 0x208000, 0x900000 + (coff & 0xFFFFF), 4096);
+            }
             switch_banks();
             {
                 volatile uint8_t *cart = (volatile uint8_t *)0x0C8000;
                 for (k = 0; k < 4096; k++)
                     if (cart[k] != bram_buf[k]) { ok = 0; break; }
             }
+#ifdef CART_EDSAVE
+            if (ok && ed_page == 1) ok |= 0x200;        /* ED-SAVE: it went to the save bank */
+#endif
             do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA1512C, ok);
             do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA15120, 0);
         }
+#ifdef CART_PAGED
+        else if (cmd == 62) {
+            /* ED-SAVE - CMD 62 "save piece in": COMM2 = a piece (0-15) -> the 4 KB buffer, which the SH2
+               reads word by word with CMD 57; COMM2 = 0x8000 asks only what this program does.  Reply
+               COMM12: 1 | 0x200 (page 1's save area is in the EverDrive's save bank: read it this way,
+               the cart has none).  The disc's own program answers 1: the SH2 reads the cart as before. */
+            int piece = do_md_cmd1(MD_CMD_READ_32X_16, 0xA15122);
+            int caps = 1;
+#ifdef CART_EDSAVE
+            caps |= 0x200;
+            if (piece != 0x8000) {
+                int k;
+                volatile uint8_t *rd = (volatile uint8_t *)0x0C8000;
+                switch_banks();
+                do_md_cmd3(MD_CMD_CHILLY_RV_MEMCPY, 0x208000, 0x800000 + (uint32_t)(piece & 15) * 4096, 4096);
+                switch_banks();
+                for (k = 0; k < 4096; k++) bram_buf[k] = rd[k];
+            }
+#endif
+            do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA1512C, caps);
+            do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA15120, 0);
+        }
+#endif
         else if (cmd == 53) {
             /* K33 - CMD 53 "load sound effects": KOBOSFX.BIN -> PCM chip.  Reply in COMM12:
                number of effects (0 = failed). */
