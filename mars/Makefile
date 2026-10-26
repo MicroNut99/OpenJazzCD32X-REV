@@ -42,7 +42,10 @@ PORT_C   := cart.c pack.c plat_mars.c mars_syscalls.c genbg.c cartcache.c
 # off: the cart keeps them as on the disc (R7's way)
 LZ ?= 0
 OBJDIR := obj$(if $(CART),_cart$(CART))$(if $(filter 1,$(LZ)),_lz)$(if $(PROF),_prof)
-DEFS_CART := $(if $(CART),-DOJ32X_CART_MB=$(CART) -DOJ32X_CART_LZ=$(if $(filter 1,$(LZ)),1,0)) $(if $(PROF),-DOJ32X_PROFILE)
+# ED: CART=ED - the Mega EverDrive PRO as the 16 MB paged cart (CD32X BootCamp docs/12): 16 MB,
+# pages 1-6 (page 7 is the EverDrive's own), OJ32X_CART_ED
+CART_MB := $(if $(filter ED,$(CART)),16,$(CART))
+DEFS_CART := $(if $(CART),-DOJ32X_CART_MB=$(CART_MB) -DOJ32X_CART_LZ=$(if $(filter 1,$(LZ)),1,0)) $(if $(filter ED,$(CART)),-DOJ32X_CART_ED) $(if $(PROF),-DOJ32X_PROFILE)
 OPT    := $(ARCH) -Os -ffunction-sections -fdata-sections
 DEFS   := -DOJ32X -DOJ32X_MARS -DOJ_SDL1 -DPORTABLE -DNDEBUG \
           -DOJ_VERSION=\"git-oj32x\" -DOJ_DATE=\"2026-10-06\" -D__32X__ -DMARS \

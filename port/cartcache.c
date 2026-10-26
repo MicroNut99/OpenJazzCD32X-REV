@@ -58,15 +58,22 @@ static uint32_t sum_of(uint32_t cart_offset, uint32_t len)
 	return s;
 }
 
+/* ED (OJ32X_CART_ED, the Mega EverDrive PRO as the cart - CD32X BootCamp docs/12): page 7 would be
+ * the EverDrive's banks 28-31, and bank 31 is its battery RAM, the OS's own.  Pages 1-6 only. */
+#ifdef OJ32X_CART_ED
+#define PROBE_TOP 6
+#else
+#define PROBE_TOP 7
+#endif
 static int probe(void)
 {
 	int wrote[8] = { 0 }, good[8] = { 0 };
-	for (int p = 7; p >= 1; p--) {
+	for (int p = PROBE_TOP; p >= 1; p--) {
 		const uint16_t w[3] = { 0x5047, (uint16_t)p, (uint16_t)~p };
 		plat_cart_page(p);
 		wrote[p] = plat_cart_piece_write(PROBE_PIECE, w, 3);
 	}
-	for (int p = 1; p <= 7; p++) {
+	for (int p = 1; p <= PROBE_TOP; p++) {
 		uint16_t w[3];
 		plat_cart_page(p);
 		plat_cart_piece_read(PROBE_PIECE, w, 3);
@@ -74,8 +81,8 @@ static int probe(void)
 	}
 	plat_cart_page(1);
 	int all = 1, low = good[1] && good[2] && good[3];
-	for (int p = 1; p <= 7; p++) all &= good[p];
-	int n = all ? 8 : low ? 4 : 2;
+	for (int p = 1; p <= PROBE_TOP; p++) all &= good[p];
+	int n = all ? PROBE_TOP + 1 : low ? 4 : 2;      /* ED: 7 = pages 1-6 */
 	say("CART PROBE: %d MB (pages 1-3 %d, 4-7 %d)", n * 2, low, all);
 	if (OJ32X_CART_MB == 8 && n > 4) n = 4;        /* the 8 MB build uses pages 2-3 only */
 	return n;

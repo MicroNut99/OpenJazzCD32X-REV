@@ -28,6 +28,76 @@
                                                ledger: set_vsram (36); REV: genbg_* (37-40);
                                                R7: rv_copy_fast (41); R9: bmd_* (42-45) */
 
+| MODE1-1 (Makefile MODE1=1, docs/12): the listener for a CARTRIDGE boot (the Sega CD's "mode 1"), started
+| by edboot/EDCD.32X from a Mega EverDrive PRO.  There the cart is at 0x000000 and the Sega CD at 0x400000
+| (Word RAM at 0x600000), the reverse of a CD boot.  The Sub-CPU program is unchanged: the listener moves
+| each address argument it is given (Word RAM 0x2xxxxx -> 0x6xxxxx, the cart 0x4xxxxx-0x7xxxxx ->
+| 0x0xxxxx-0x3xxxxx), keeps interrupts off while RV = 1 (the 68000's vectors are then the cart's), and
+| starts the 32X the cartridge way.  Not set: this file assembles exactly as before.
+        .ifndef OL_MODE1
+        .equ    OL_MODE1, 0
+        .endif
+| MODE1-2 (Makefile M1WORDS=1, with MODE1=1): every copy to or from the cart whose source, destination and
+| length are even goes in words, as edtest wrote the EverDrive (byte writes to it with the 32X on were
+| never tried on a console).
+        .ifndef OL_M1WORDS
+        .equ    OL_M1WORDS, 0
+        .endif
+| MODE1-4 (diagnostics, EDCD only): M1MINVB=1 - the vblank handler does only the Sub-CPU's level 2
+| interrupt (no pads, no gate-array writes); M1NOVINT=1 - the vblank handler skips the Sub-CPU's level 2
+| interrupt (its BIOS then gets none: CD reads will stall later, which is expected).
+        .ifndef OL_M1MINVB
+        .equ    OL_M1MINVB, 0
+        .endif
+| MODE1-5: M1W0BANK=<n> - the EverDrive bank that window 0 shows (EDCD_W0): the window-1 route to
+| window 0's addresses maps that bank, not bank 0.
+        .ifndef OL_M1W0BANK
+        .equ    OL_M1W0BANK, 0
+        .endif
+| MODE1-7 (M1SAVE=1, with MODE1=1): the EverDrive's save bank.  Bank 31 is the EverDrive PRO's battery
+| RAM, which its OS keeps on the SD card (MEGA/gamedata/<launcher>/bram.srm, 256 KB) when the launcher's
+| header declares save RAM; the 16 MB of banks 0-29 are PSRAM, which the OS wipes every time it returns
+| to its menu (edsave, console, 25 Oct 2026).  A copy whose cart side is 0x800000-0x83FFFF goes to or
+| from that bank: window 1 = bank 31 for the block, the copy at 0x080000 + (address - 0x800000),
+| window 1 = bank 1 again - the window-1 route of MODE1-3 with another bank.  Only the first 256 KB:
+| the OS keeps its own things above.  Not set: m1_cart assembles exactly as before.
+        .ifndef OL_M1SAVE
+        .equ    OL_M1SAVE, 0
+        .endif
+| MODE1-7b (EDSAVE-3 tests): M1SAVEBANK=<n> the bank the saves go to (31; 27 = a PSRAM bank, for a test:
+| nothing persists), M1SAVEWIN=<1-7> the window the bank is shown in for the block (1).  Defaults = MODE1-7.
+        .ifndef OL_M1SAVEBANK
+        .equ    OL_M1SAVEBANK, 31
+        .endif
+        .ifndef OL_M1SAVEWIN
+        .equ    OL_M1SAVEWIN, 1
+        .endif
+| MODE1-9 (M1PAGE=1, with MODE1=1): the paged cart's page registers on the EverDrive.  The paged games
+| (OpenJazz, Hurrican, SuperTux, Sonic CD) switch 2 MB pages by one byte written with RV = 1 to 0xA130F2
+| (window 1 = cart 0x200000-0x3FFFFF) or 0xA130F0 (window 0), through the listener's safe_cart_xfer.  On
+| the EverDrive those addresses are CTRL0/CTRL1 and a page is four of its 512 KB banks: page p in
+| window 1 = CTRL4..7 = 4p..4p+3, in window 0 = CTRL0's bank + CTRL1..3.  m1_cart catches the write
+| and does that instead; m1_wb keeps what each EverDrive window shows, so the window-1 routes
+| (MODE1-3, MODE1-7) put the right bank back.  Page 7 holds bank 31 (the OS's): a game's EverDrive
+| build must never ask for it (the games' CART_ED probes stop at page 6).  Not set: nothing assembles.
+        .ifndef OL_M1PAGE
+        .equ    OL_M1PAGE, 0
+        .endif
+| MODE1-6: the EverDrive's write-enable bit (CTRL0 bit 13, W) is OFF except inside a copy INTO the
+| cart.  Console, 25 Oct 2026 (edw0): with W on, some of the 68000's writes to OTHER addresses (work
+| RAM, the VDP, the gate array - what a listener does all the time) land in the cart, and the SH2's
+| reads of the cart come back as zeros meanwhile; with W off, none of that.  So W goes on after the
+| call's own stack push, with RV already holding the SH2 off the cart, and off again before any other
+| write.  M1CTRL0 = the launcher's CTRL0 without W (default 0x8000: P; 0xC000 with the X bit).
+        .ifndef OL_M1CTRL0
+        .equ    OL_M1CTRL0, 0x8000
+        .endif
+        .equ    OL_M1CTRL0_W1, OL_M1CTRL0 + 0x2000 + OL_M1W0BANK   /* + not |: | starts a comment here */
+        .equ    OL_M1CTRL0_W0, OL_M1CTRL0 + OL_M1W0BANK
+        .ifndef OL_M1NOVINT
+        .equ    OL_M1NOVINT, 0
+        .endif
+
 
         .text
 
@@ -227,17 +297,36 @@ md_check:
         move.b  d0,0xA1200E
 
         /* push args on stack */
+        .if OL_MODE1
+        move.l  0xA1202C,d1             /* MODE1-1: each argument moved to the cartridge-boot map */
+        bsr     m1_arg
+        move.l  d1,-(sp)
+        move.l  0xA12028,d1
+        bsr     m1_arg
+        move.l  d1,-(sp)
+        move.l  0xA12024,d1
+        bsr     m1_arg
+        move.l  d1,-(sp)
+        move.l  0xA12020,d1
+        bsr     m1_arg
+        move.l  d1,-(sp)
+        .else
         move.l  0xA1202C,-(sp)
         move.l  0xA12028,-(sp)
         move.l  0xA12024,-(sp)
         move.l  0xA12020,-(sp)
+        .endif
 
         cmpi.b  #'M,d0
         bne.b   2f
 1:
         btst    #0,0xA12003
         beq.b   1b
+        .if OL_MODE1
+        jmp     0x600000                /* MODE1-1: Word RAM in a cartridge boot */
+        .else
         jmp     0x200000
+        .endif
 2:
         move.l  #-1,0xA12010
         cmpi.b  #MD_CMD_END,d0
@@ -267,6 +356,31 @@ md_check:
 3:
         lea     16(sp),sp
         bra     cmd_done
+
+        .if OL_MODE1
+| MODE1-1: d1 = an argument of command d0, as the Sub-CPU gives it (CD-boot addresses) -> d1 for a
+| cartridge boot.  Word RAM 0x200000-0x3FFFFF -> 0x600000-0x7FFFFF; the cart 0x400000-0x7FFFFF ->
+| 0x000000-0x3FFFFF (with RV = 1, as every cart routine here sets it).  Commands 19-22 (32X register
+| reads and writes) are left alone: their values are data (pads, lengths, chunk numbers), not addresses.
+m1_arg:
+        cmpi.b  #19,d0
+        blo.b   1f
+        cmpi.b  #22,d0
+        bls.b   9f
+1:
+        cmpi.l  #0x200000,d1
+        blo.b   9f
+        cmpi.l  #0x800000,d1
+        bhs.b   9f
+        cmpi.l  #0x400000,d1
+        bhs.b   2f
+        addi.l  #0x400000,d1            /* Word RAM */
+        rts
+2:
+        subi.l  #0x400000,d1            /* the cart */
+9:
+        rts
+        .endif
 
 cmd_table:
         .word   cmd_done - cmd_table
@@ -474,7 +588,11 @@ md_init_hw:
         lea     vblank_int(pc),a0
         move.l  a0,0xFFFD08
 
+        .ifdef  OL_DISPON
+        move.w  #0x8174,(a4)            | MODE1-8 (DIAG=1 launcher): the Genesis display stays ON for the green text
+        .else
         move.w  #0x8134,(a4)            | OL-13: display OFF (V-int on) - no white boot text
+        .endif
         movem.l (sp)+,d2-d7/a2-a5
         move    #0x2000,sr
         rts
@@ -924,6 +1042,12 @@ init_32x:
         bsr     put_str
         lea     16(sp),sp
 
+        .if OL_MODE1
+| MODE1-1: the cartridge boot already started the 32X: its boot ROMs loaded this loader from the cart
+| (EDCD.32X's 32X header) and wrote M_OK / S_OK.  No SH2 reset here: after one the boot ROMs would
+| look for the cartridge's start-up again.
+        move.w  #0x2700,sr
+        .else
         lea     0xA15000,a0
         move.l  #500000,d1
 1:
@@ -939,6 +1063,7 @@ init_32x:
         move.w  #19170,d1
 1:
         dbra    d1,1b
+        .endif
 
         pea     21.l
         pea     12.l
@@ -949,9 +1074,11 @@ init_32x:
         lea     0xA15000,a0
 
         moveq   #0,d0
+        .if OL_MODE1 == 0                   /* MODE1-1: M_OK / S_OK stay; the 32X is on already */
         move.l  d0,0x0120(a0)
         move.l  d0,0x0124(a0)
         move.b  #3,0x0101(a0)
+        .endif
 2:
         bclr    #7,0x0100(a0)
         bne.b   2b
@@ -1000,6 +1127,7 @@ init_32x:
         lea     16(sp),sp
         lea     0xA15000,a0
 
+        .if OL_MODE1 == 0                   /* MODE1-1: no CD boot table, no "_CD_" */
         move.l  0x0120(a0),d0
         cmpi.l  #0x53444552,d0
         bne.b   8f
@@ -1031,11 +1159,14 @@ init_32x:
         lea     16(sp),sp
 
         lea     0xA15000,a0
+        .endif
 10:
         bset    #7,0x0100(a0)
         beq.b   10b
 
+        .if OL_MODE1 == 0
         move.l  #0x5F43445F,0x0120(a0)
+        .endif
 
         pea     25.l
         pea     12.l
@@ -1126,6 +1257,17 @@ copy_to_cart:
         rts
 
 safe_cart_xfer:
+        .if OL_MODE1
+        movem.l d3,-(sp)                /* MODE1-1: (src, dst, len), bytes, through m1_xfer */
+        movea.l 8(sp),a0
+        movea.l 12(sp),a1
+        move.l  16(sp),d0
+        moveq   #0,d3
+        bsr     m1_xfer
+        movem.l (sp)+,d3
+        moveq   #0,d0
+        rts
+        .endif
         movem.l d2-d3/a2,-(sp)
         movea.l 16(sp),a2
         move.l  20(sp),d2
@@ -1154,6 +1296,17 @@ safe_cart_xfer:
         rts
 
 safe_cart_xfer_w:
+        .if OL_MODE1
+        movem.l d3,-(sp)                /* MODE1-1: (src, dst, len), words, through m1_xfer */
+        movea.l 8(sp),a0
+        movea.l 12(sp),a1
+        move.l  16(sp),d0
+        moveq   #1,d3
+        bsr     m1_xfer
+        movem.l (sp)+,d3
+        moveq   #0,d0
+        rts
+        .endif
         movem.l d2-d3/a2,-(sp)
         movea.l 16(sp),a2
         move.l  20(sp),d2
@@ -1179,6 +1332,10 @@ safe_cart_xfer_w:
         rts
 
 bram_put:
+        .if OL_MODE1
+        moveq   #-1,d0                  /* MODE1-1: not in a cartridge boot (Word RAM with RV = 1) */
+        rts
+        .endif
         movem.l d2-d3/a2,-(sp)
         movea.l 16(sp),a2
         move.l  20(sp),d2
@@ -1203,6 +1360,10 @@ bram_put:
         rts
 
 bram_get:
+        .if OL_MODE1
+        moveq   #-1,d0                  /* MODE1-1: not in a cartridge boot (Word RAM with RV = 1) */
+        rts
+        .endif
         movem.l d2-d3/a2,-(sp)
         movea.l 16(sp),a2
         move.l  20(sp),d2
@@ -1303,7 +1464,11 @@ copy_words:
         rts
 
 message0:
+        .if OL_MODE1
+        .asciz  "Init 32X M1"           /* MODE1-1: the cartridge-boot listener */
+        .else
         .asciz  "Init 32X V2.9"
+        .endif
 message1:
         .asciz  "Found 32X"
 message2:
@@ -1321,6 +1486,9 @@ message6:
 
 vblank_int:
         movem.l d0-d1/a0-a1,-(sp)
+        .if OL_MODE1 && OL_M1MINVB
+        bra.b   vb_ifl2                 /* MODE1-4: level 2 to the Sub-CPU only */
+        .endif
         bsr.w   genbg_vblank            /* REV: Genesis plane - scroll, colours, new cells */
         bsr.w   bmd_vblank              /* R9: bonus floor - the buffer the SH2 shows */
 
@@ -1341,10 +1509,15 @@ vblank_int:
         beq.b   1f
         nop                     | OpenLara: COMM6 belongs to the renderer (was: move.w d0,0xA15126)             /* HW7: 68K heartbeat -> 32X COMM6 (SH2 reads it 1x/s) */
 1:
+vb_ifl2:
+        .if OL_MODE1 && OL_M1NOVINT
+        bra.b   vb_out                  /* MODE1-4: no level 2 to the Sub-CPU */
+        .endif
 
         move.w  0xA12000,d0
         ori.w   #0x0100,d0
         move.w  d0,0xA12000
+vb_out:
 
         movem.l (sp)+,d0-d1/a0-a1
         rte
@@ -1362,6 +1535,255 @@ chilly_memcpy:
         rts
 
 chilly_rv_memcpy:
+        .if OL_MODE1
+        movem.l d3,-(sp)                /* MODE1-1: (dst, src, len), bytes, through m1_xfer */
+        movea.l 8(sp),a1
+        movea.l 12(sp),a0
+        move.l  16(sp),d0
+        moveq   #0,d3
+        bsr     m1_xfer
+        movem.l (sp)+,d3
+        moveq.l #0,d0
+        rts
+
+| MODE1-1: m1_xfer - a copy to or from the cart for the cartridge boot.  a0 = src, a1 = dst, d0 = bytes,
+| d3 = 0 bytes / 1 words.  The cart (0x000000-0x3FFFFF) and its registers (0xA130xx) take RV = 1; the
+| Sega CD (0x400000-0x7FFFFF: Word RAM) may not be touched while RV = 1.  Console, 25 Oct 2026: copies
+| from Word RAM made with RV = 1 came out garbled in cartridge mode (the game "03" became "01", 5AA5
+| read back 4880), the same copies with RV = 0 (the splash) did not.  So every block of up to 1 KB
+| goes through a buffer in work RAM: the Sega CD side with RV = 0, the cart side with RV = 1 and
+| interrupts off (about 5 ms: a vblank waits at most that long).
+| MODE1-3: the cart's window 0 (0x000000-0x07FFFF) is reached through window 1.  Console, 25 Oct 2026:
+| copies to the cart's first bytes never landed (chunk 0 +6: 03 read back 01, 5AA5 read back 4880; the
+| same with bytes, words, bank 8 in window 0, the buffer).  With the 32X on, its adapter answers the
+| 68000 there.  edtest only ever wrote 0x080000 and up, so: window 1 = bank 0 for the block, the copy at
+| 0x080000 + offset, window 1 = bank 1 again (EDCD's w0_move does the same).  d4: 0 the cart is a1.
+m1_xfer:
+        movem.l d2/d4/a2-a4,-(sp)
+        .if OL_M1WORDS
+        tst.w   d3                      /* MODE1-2: bytes, but all even -> words */
+        bne.b   0f
+        move.l  a0,d1
+        move.l  a1,d2
+        or.l    d2,d1
+        or.l    d0,d1
+        btst    #0,d1
+        bne.b   0f
+        moveq   #1,d3
+0:
+        .endif
+        lea     m1_buf(pc),a4
+1:
+        tst.l   d0
+        ble     9f
+        move.l  d0,d2
+        cmpi.l  #1024,d2
+        bls.b   2f
+        move.l  #1024,d2
+2:
+        sub.l   d2,d0
+        cmpa.l  #0x400000,a0
+        blo.b   4f
+        cmpa.l  #0x800000,a0
+        bhs.b   4f
+        movea.l a1,a2                   /* the source is the Sega CD: to the buffer with RV = 0 */
+        movea.l a4,a1
+        bsr     m1_cpy
+        movea.l a2,a1
+        movea.l a0,a2
+        movea.l a4,a0                   /* then the buffer to the cart side with RV = 1 */
+        moveq   #0,d4
+        bsr     m1_cart
+        movea.l a2,a0
+        bra.b   1b
+4:
+        cmpa.l  #0x400000,a1
+        blo.b   6f
+        cmpa.l  #0x800000,a1
+        bhs.b   6f
+        movea.l a1,a2                   /* the destination is the Sega CD: the cart to the buffer */
+        movea.l a4,a1                   /* with RV = 1 ... */
+        moveq   #1,d4
+        bsr     m1_cart
+        movea.l a2,a1
+        movea.l a0,a2
+        movea.l a4,a0                   /* ... then the buffer there with RV = 0 */
+        bsr     m1_cpy
+        movea.l a2,a0
+        bra.b   1b
+6:
+        moveq   #0,d4
+        bsr     m1_cart                 /* neither side is the Sega CD: straight, RV = 1 */
+        bra.b   1b
+9:
+        movem.l (sp)+,d2/d4/a2-a4
+        rts
+
+| the cart side of a block: d4 = 0 the cart is a1, else a0.  In window 0 -> through window 1.
+| MODE1-7b: one block through a window: \reg = the window's bank register, \back = its bank again.
+| a3 = what to add to the address for the copy, d1 = the bank the window shows meanwhile.
+        .macro  M1_WINBLOCK reg, back
+        move.w  sr,-(sp)
+        move.w  #0x2700,sr
+        bset    #0,0xA15107
+        move.w  d1,\reg                 /* the window = that bank */
+        tst.w   d4
+        bne.b   5f
+        adda.l  a3,a1
+        bsr     m1_cpy_w                /* a write into the cart: W on inside */
+        suba.l  a3,a1
+        bra.b   6f
+5:      adda.l  a3,a0
+        bsr     m1_cpy                  /* a read from the cart: W stays off */
+        suba.l  a3,a0
+6:
+        .if OL_M1PAGE
+        move.w  m1_wb+2*(\back)(pc),\reg /* the window = what it showed (a page may have changed it) */
+        .else
+        move.w  #\back,\reg             /* the window = its own bank again */
+        .endif
+        bclr    #0,0xA15107
+        move.w  (sp)+,sr
+        rts
+        .endm
+m1_cart:
+        .if OL_M1PAGE
+        tst.w   d4                      /* MODE1-9: one byte written to a page register? */
+        bne.b   m1_np
+        cmpi.l  #1,d2
+        bne.b   m1_np
+        cmpa.l  #0xA130F0,a1
+        beq     m1_page
+        cmpa.l  #0xA130F2,a1
+        beq     m1_page
+m1_np:
+        .endif
+        .if OL_M1SAVE
+        tst.w   d4
+        bne.b   1f
+        move.l  a1,d1
+        bra.b   2f
+1:      move.l  a0,d1
+2:      cmpi.l  #0x800000,d1
+        blo.b   3f
+        cmpi.l  #0x840000,d1
+        bhs     m1_rvcpy                /* above the save bank's 256 KB: never sent */
+        movea.l #(OL_M1SAVEWIN*0x080000)-0x800000,a3   /* the save bank, through window OL_M1SAVEWIN */
+        moveq   #OL_M1SAVEBANK,d1
+        M1_WINBLOCK 0xA130F0+2*OL_M1SAVEWIN, OL_M1SAVEWIN
+3:      cmpi.l  #0x080000,d1
+        bhs     m1_rvcpy
+        movea.l #0x080000,a3            /* window 0, through window 1 (MODE1-3) */
+        move.w  #OL_M1W0BANK,d1
+        M1_WINBLOCK 0xA130F2, 1
+        .else
+        tst.w   d4
+        bne.b   1f
+        cmpa.l  #0x080000,a1
+        bra.b   2f
+1:      cmpa.l  #0x080000,a0
+2:      bhs     m1_rvcpy
+        move.w  sr,-(sp)
+        move.w  #0x2700,sr
+        bset    #0,0xA15107
+        move.w  #OL_M1W0BANK,0xA130F2   /* window 1 = the bank window 0 shows (bank 0, or EDCD_W0) */
+        tst.w   d4
+        bne.b   3f
+        adda.l  #0x080000,a1
+        bsr.b   m1_cpy_w                /* a write into the cart: W on inside */
+        suba.l  #0x080000,a1
+        bra.b   4f
+3:      adda.l  #0x080000,a0
+        bsr.b   m1_cpy                  /* a read from the cart: W stays off */
+        suba.l  #0x080000,a0
+4:      move.w  #1,0xA130F2             /* window 1 = bank 1 again */
+        bclr    #0,0xA15107
+        move.w  (sp)+,sr
+        rts
+        .endif
+
+| d2 bytes (a0)+ -> (a1)+, in bytes (d3 = 0) or words (d3 = 1); with RV = 1 and no interrupt.
+| d4 = 0: the cart is the destination (W on inside the copy); else a read of the cart (W off).
+m1_rvcpy:
+        move.w  sr,-(sp)
+        move.w  #0x2700,sr
+        bset    #0,0xA15107
+        tst.w   d4
+        bne.b   1f
+        bsr.b   m1_cpy_w
+        bra.b   2f
+1:      bsr.b   m1_cpy
+2:      bclr    #0,0xA15107
+        move.w  (sp)+,sr
+        rts
+
+| MODE1-6: m1_cpy with the EverDrive's W on for the copy only - no other write by the 68000 between
+| the two CTRL0 writes (the call's push is before, the return is a read).  RV = 1 already.
+m1_cpy_w:
+        move.w  #OL_M1CTRL0_W1,0xA130F0
+        bsr.b   m1_cpy
+        move.w  #OL_M1CTRL0_W0,0xA130F0
+        rts
+| d2 bytes (a0)+ -> (a1)+, in bytes (d3 = 0) or words (d3 = 1, d2 rounded up to a word)
+m1_cpy:
+        move.l  d2,d1
+        tst.w   d3
+        bne.b   2f
+        subq.l  #1,d1
+1:
+        move.b  (a0)+,(a1)+
+        dbra    d1,1b
+        rts
+2:
+        addq.l  #1,d1
+        lsr.l   #1,d1
+        subq.l  #1,d1
+3:
+        move.w  (a0)+,(a1)+
+        dbra    d1,3b
+        rts
+
+        .if OL_M1PAGE
+| MODE1-9: the page byte is at (a0) (the buffer: the game wrote it into Word RAM).  a1 = the register.
+m1_page:
+        move.l  a2,-(sp)
+        lea     m1_wb(pc),a2
+        moveq   #0,d1
+        move.b  (a0),d1
+        lsl.w   #2,d1                   /* page p -> bank 4p */
+        move.w  sr,-(sp)
+        move.w  #0x2700,sr
+        bset    #0,0xA15107
+        cmpa.l  #0xA130F0,a1
+        beq.b   1f
+        lea     0xA130F8,a3             /* window 1 (0x200000): CTRL4..7 = 4p..4p+3 */
+        addq.l  #8,a2
+        bra.b   3f
+1:      move.w  d1,d2                   /* window 0 (0x000000): CTRL0's bank + CTRL1..3 */
+        ori.w   #OL_M1CTRL0_W0,d2
+        move.w  d2,0xA130F0
+        move.w  d1,(a2)+
+        lea     0xA130F2,a3
+        addq.w  #1,d1
+        moveq   #3-1,d2
+        bra.b   4f
+3:      moveq   #4-1,d2
+4:      move.w  d1,(a3)+
+        move.w  d1,(a2)+
+        addq.w  #1,d1
+        dbra    d2,4b
+        bclr    #0,0xA15107
+        move.w  (sp)+,sr
+        movea.l (sp)+,a2
+        rts
+        .align  2
+m1_wb:  .word   0, 1, 2, 3, 4, 5, 6, 7  /* what EverDrive window n shows (the launcher's linear start) */
+        .endif
+
+        .align  2
+m1_buf:
+        .space  1024
+        .else
         bset    #0,0xA15107
         movea.l 4(sp),a1
         movea.l 8(sp),a0
@@ -1374,6 +1796,7 @@ chilly_rv_memcpy:
         bclr    #0,0xA15107
         moveq.l #0,d0
         rts
+        .endif
 
 | =============================================================================
 | 68K EXCEPTION TRAP (V71, restored in K29) - DIAGNOSTIC, changes nothing unless the 68K
@@ -1505,6 +1928,18 @@ exc_buf:
 | compressed packs (main.c CMD 69): the packed bytes into Word RAM, the unpacked ones out of
 | it. len even; the last bytes below 48 go a word at a time.
 rv_copy_fast:
+        .if OL_MODE1
+        movem.l d3,-(sp)                /* MODE1-1: (src, dst, len), words, through m1_xfer (the rule:
+                                           Word RAM and the cart never with the same RV) */
+        movea.l 8(sp),a0
+        movea.l 12(sp),a1
+        move.l  16(sp),d0
+        moveq   #1,d3
+        bsr     m1_xfer
+        movem.l (sp)+,d3
+        moveq   #0,d0
+        rts
+        .endif
         movem.l d2-d7/a2-a6,-(sp)
         movea.l 48(sp),a0               /* src */
         movea.l 52(sp),a1               /* dst */
