@@ -461,8 +461,13 @@ namespace {
 			int tcol = -1;
 			bool tskip = false;                         // the plane covers this tile
 			const unsigned char* trow = nullptr;        // its pixel row (see-through test), or none
-			// pairs of screen pixels sx, sx + 1 with sx even (16-bit frame buffer words)
-			int sx0 = (j.ox + xa) & ~1;
+			// pairs of screen pixels sx, sx + 1 that make a 16-bit frame buffer word: the row
+			// starts at an odd address when the view's x is odd (the ring's column vX - wx0; the
+			// shift register moves the picture), and a word access at an odd address is an SH2
+			// address error on the console (ares lets it through) - the red screen in a demo
+			const int odd = (int)(reinterpret_cast<uintptr_t>(row) & 1);
+			int sx0 = j.ox + xa;
+			if ((sx0 ^ odd) & 1) sx0--;
 			for (int sx = sx0; sx < j.ox + xb; sx += 2) {
 				unsigned char v[2];
 				bool on[2] = { false, false };

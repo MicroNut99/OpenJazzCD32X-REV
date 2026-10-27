@@ -633,9 +633,14 @@ static void pack_load(void)
 
 #if OJ32X_CART_MB
 #include "cartcache.h"
+#endif
+#if OJ32X_CART_MB && !defined(OJ32X_CART_ED)
 /* R7 - FILL: on the boot, the packs that are not in the cart yet are copied into its free pages
  * (cartcache_fill), so the first boot fills the 16 MB cart and later ones load nothing. Start
- * stops it (the rest load when they are played, as before). */
+ * stops it (the rest load when they are played, as before).
+ * Not in an EverDrive build (OJ32X_CART_ED): the EverDrive clears its RAM at its menu, so every
+ * start would copy the worlds again (minutes of "COPYING TO THE CART"); a world loads from the
+ * disc when it is played and stays in the cart for that session. */
 static int fill_shown;   /* R11: the copying text is on the splash */
 static int fill_progress(int done, int total)
 {
@@ -707,8 +712,8 @@ void plat_mars_entry(void)
 	plat_log("PACK LOADING");
 	pack_load();   /* always Jazz CD's common pack - Holiday Hare '95 is an episode */
 	sfx_load();
-#if OJ32X_CART_MB
-	cart_fill();   /* R7: the 16 MB cart filled on the first boot */
+#if OJ32X_CART_MB && !defined(OJ32X_CART_ED)
+	cart_fill();   /* R7: the 16 MB cart filled on the first boot (not on the EverDrive: above) */
 #endif
 	if (OJ32X_SPLASH)
 		while (vblank_count - splash_from < OJ32X_SPLASH_HOLD) { }
