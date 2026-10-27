@@ -979,62 +979,6 @@ static int bram_load(void) {                    /* 1 = loaded, 0 = no file / no 
     if (!bram_init()) return 0;
     return bram_call(3, bram_name, bram_buf) >= 0 ? 1 : 0;
 }
-/* ---- BRAMSAVE (26 Oct 2026, MicroNut99: "All of the listed games need to use the SegaCD to save
-   games.  Use more than one save if needed"): the save area's pieces live in the Sega CD's own
-   backup RAM, one BIOS file per piece, each only as long as the piece's own contents.
-   WHY per piece rather than one big file: the console's internal backup RAM is 8 KB shared by every
-   game that has ever saved on it, in 64-byte blocks, so a slot that was never used must cost
-   nothing - a file is created the first time that piece is written and no sooner.
-   WHY this is the right store: unlike the cart's page 1 (wiped by the EverDrive's menu) and unlike
-   the EverDrive's bank 31 (which is keyed to the launcher's file name and does not exist at all on
-   a disc boot), the Sega CD's backup RAM is battery-backed hardware that is there either way.
-   The SH2 side needs no change: it already asks the Sub-CPU for a piece (CMD 62) and hands one back
-   (CMD 58 + 61) because of the ED-SAVE work, and the 0x200 reply tells it to read that way. */
-#ifdef CART_BRAMSAVE
-#define BRAM_TAG "OJ32X_P"                      /* + two digits = 9 of the 11 characters */
-static char bram_piece_name[12];
-static const char *bram_piece_file(int piece)
-{
-    int i = 0;
-    while (BRAM_TAG[i]) { bram_piece_name[i] = BRAM_TAG[i]; i++; }
-    bram_piece_name[i++] = (char)('0' + (piece / 10));
-    bram_piece_name[i++] = (char)('0' + (piece % 10));
-    while (i < 11) bram_piece_name[i++] = ' ';
-    bram_piece_name[11] = 0;
-    return bram_piece_name;
-}
-/* how much of the 4 KB buffer this piece actually carries.  The pieces name themselves:
-   "OJSF" + a 16-bit length + a 12-byte name is one of the engine's files (port/mars_syscalls.c),
-   "OJPS" is the port's own settings (4 + 8 bytes).  Anything else is given one block. */
-static int bram_piece_bytes(void)
-{
-    if (bram_buf[0] == 'O' && bram_buf[1] == 'J' && bram_buf[2] == 'S' && bram_buf[3] == 'F') {
-        int n = 18 + (bram_buf[4] << 8 | bram_buf[5]);
-        return n > 0 && n <= BRAM_BYTES ? n : BRAM_BYTES;
-    }
-    if (bram_buf[0] == 'O' && bram_buf[1] == 'J' && bram_buf[2] == 'P' && bram_buf[3] == 'S') return 12;
-    return 64;
-}
-static int bram_piece_save(int piece)           /* 1 written, 0 no BRAM / no room */
-{
-    int i, bytes, blocks;
-    if (!bram_init()) return 0;
-    bytes = bram_piece_bytes();
-    blocks = (bytes + 63) / 64;
-    for (i = 0; i < 11; i++) bram_param[i] = (uint8_t)bram_piece_file(piece)[i];
-    bram_param[11] = 0;                         /* normal (not protected) mode */
-    bram_param[12] = (uint8_t)(blocks >> 8); bram_param[13] = (uint8_t)blocks;
-    return bram_call(4, bram_param, bram_buf) >= 0 ? 1 : 0;
-}
-static int bram_piece_load(int piece)           /* 1 read, 0 no file: the buffer is left cleared */
-{
-    int i;
-    for (i = 0; i < BRAM_BYTES; i++) bram_buf[i] = 0;
-    if (!bram_init()) return 0;
-    return bram_call(3, bram_piece_file(piece), bram_buf) >= 0 ? 1 : 0;
-}
-#endif
-
 static int bram_save(void) {
     int i;
     if (!bram_init()) return 0;
@@ -1656,15 +1600,6 @@ int main(void)
                exactly as CMD 46).  Read back through the 32X window and compared.
                Reply COMM12: 1 ok, 0 failed. */
             int piece = do_md_cmd1(MD_CMD_READ_32X_16, 0xA15122) & 15;
-#ifdef CART_BRAMSAVE
-            /* BRAMSAVE: into the Sega CD's backup RAM, its own file for this piece.  0x200 in the
-               reply tells the SH2 to read the area back through CMD 62 rather than from the cart. */
-            {
-                int ok = bram_piece_save(piece) ? 1 | 0x200 : 0;
-                do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA1512C, ok);
-                do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA15120, 0);
-            }
-#else
             uint32_t coff = CART_IMG_BASE + 0x3F0000 + (uint32_t)piece * 4096;
             int k, ok = 1;
             volatile uint8_t *wr = (volatile uint8_t *)0x0C0000;
@@ -1694,7 +1629,6 @@ int main(void)
 #endif
             do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA1512C, ok);
             do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA15120, 0);
-#endif
         }
 #ifdef CART_PAGED
         else if (cmd == 62) {
@@ -1704,10 +1638,7 @@ int main(void)
                the cart has none).  The disc's own program answers 1: the SH2 reads the cart as before. */
             int piece = do_md_cmd1(MD_CMD_READ_32X_16, 0xA15122);
             int caps = 1;
-#ifdef CART_BRAMSAVE
-            caps |= 0x200;                          /* BRAMSAVE: the cart holds no save area */
-            if (piece != 0x8000) bram_piece_load(piece & 15);
-#elif defined(CART_EDSAVE)
+#ifdef CART_EDSAVE
             caps |= 0x200;
             if (piece != 0x8000) {
                 int k;
