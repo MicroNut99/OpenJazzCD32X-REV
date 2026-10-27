@@ -326,6 +326,13 @@ static uint32_t cur_dest = 0xFFFFFFFFu;
    (CMD 57).  The EverDrive wipes its PSRAM at its menu, so nothing in page 1 itself would outlive a
    relaunch (OpenLara CD32X EDSAVE-1; CD32X BootCamp docs/12). */
 static int ed_page = 1;                            /* what window 1 shows (1 after the boot) */
+/* MicroNut99, 26 Oct 2026: "bank 31 belongs to the battery. do not touch it. Follow Lara."  So the
+   save bank holds the SAVE and nothing else.  OpenJazz's saves are pieces 0-10 (0 the settings file
+   both games share, 1-4 SAVE.0-3, 5-9 Holiday Hare's, 10 the port's own settings).  Pieces 14 and 15
+   are the cart cache's ledger and its board probe marker (port/cartcache.c) - working notes about
+   PSRAM that the EverDrive wipes anyway, which have no business in battery-backed memory.  They stay
+   in the cart, where they always were. */
+#define SAVE_PIECE_TOP 10
 /* ED-PAGE (26 Oct 2026, measured on the console with CD32X-BootCamp/edpage):
    the EverDrive IGNORES the one even byte to 0xA130F2 that the 16MB-PCB cart's page register wants,
    and TAKES a word write to CTRL4-7 (0xA130F8..FE = the four 512 KB windows of cart 0x200000-
@@ -1606,7 +1613,7 @@ int main(void)
             for (k = 0; k < 4096; k++) wr[k] = bram_buf[k];
             switch_banks();
 #ifdef CART_EDSAVE
-            if (ed_page == 1) {
+            if (ed_page == 1 && piece <= SAVE_PIECE_TOP) {
                 /* ED-SAVE: into the EverDrive's save bank and back out of it (the listener's window-1
                    route: RV = 1, the write bit on for the write only) */
                 do_md_cmd3(MD_CMD_CHILLY_RV_MEMCPY, 0x800000 + (uint32_t)piece * 4096, 0x200000, 4096);
@@ -1625,7 +1632,7 @@ int main(void)
                     if (cart[k] != bram_buf[k]) { ok = 0; break; }
             }
 #ifdef CART_EDSAVE
-            if (ok && ed_page == 1) ok |= 0x200;        /* ED-SAVE: it went to the save bank */
+            if (ok && ed_page == 1 && piece <= SAVE_PIECE_TOP) ok |= 0x200;   /* it went to the save bank */
 #endif
             do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA1512C, ok);
             do_md_cmd2(MD_CMD_WRITE_32X_16, 0xA15120, 0);
@@ -1640,7 +1647,7 @@ int main(void)
             int caps = 1;
 #ifdef CART_EDSAVE
             caps |= 0x200;
-            if (piece != 0x8000) {
+            if (piece != 0x8000 && (piece & 15) <= SAVE_PIECE_TOP) {
                 int k;
                 volatile uint8_t *rd = (volatile uint8_t *)0x0C8000;
                 switch_banks();

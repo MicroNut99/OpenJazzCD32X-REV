@@ -1543,7 +1543,9 @@ int plat_cart_piece_write(int piece, const uint16_t *words, int n)
 
 void plat_cart_piece_read(int piece, uint16_t *words, int n)
 {
-	if (page_now == 1 && ed_save_bank()) {           /* ED-SAVE: page 1's pieces are in the bank */
+	/* only the SAVE lives in the EverDrive's battery bank (MicroNut99, 26 Oct): pieces 0-10.  The
+	   cache's ledger (14) and the probe's marker (15) are notes about PSRAM and stay in the cart. */
+	if (page_now == 1 && piece <= 10 && ed_save_bank()) {
 		ed_fetch(piece);
 		for (int i = 0; i < n; i++) words[i] = (uint16_t)(ed_buf[2 * i] << 8 | ed_buf[2 * i + 1]);
 		return;
