@@ -206,7 +206,7 @@ static void sdram_wait(volatile uint16_t *reg16, volatile int *flag, volatile in
 	masked = sr | 0xF0u;
 	__asm__ volatile ("ldc %0,sr" : : "r"(masked));
 	if (ack) *ack = 1;
-	for (int32_t n = 0; n < 8000000; n++) {
+	for (int32_t n = 0; n < 4000000; n++) {          /* OpenLara's csSpin bound, to the number */
 		if (reg16 ? *reg16 == 0 : *flag == 0) break;
 		for (volatile int32_t k = 0; k < 64; k++) {}    /* never hammer a COMM register */
 	}
@@ -327,8 +327,8 @@ static int send_cmd(uint16_t cmd, uint32_t tries)
 static int send_cmd_rv(uint16_t cmd, uint32_t tries)
 {
 	(void)tries;
-	bmd_collect();
-	pad_collect(40000UL);
+	bmd_collect();                                   /* before the park, not between it and the */
+	pad_collect(40000UL);                            /* command: OpenLara's cdCmdSafe does neither */
 	JOB->parked = 0;
 	JOB->park = 1;
 	for (uint32_t n = 0; n < 4000000UL && !JOB->parked; n++) bus_rest(64);
