@@ -571,6 +571,17 @@ namespace {
  * foreground tile pass (true), drawn into one band (target's clip rectangle). Same pixels as
  * the original code: only the target surface and the row range differ.
  */
+/* Diamondus (world 0): its giant waterfalls' foreground tiles - 59 the water, 179 the water under a rock
+ * lip at their tops - are not drawn.  They are foreground (in front of the sprites), so the 32X drew
+ * every one of them every frame: a waterfall nine tiles wide filled the screen and the game ran at 4
+ * frames a second (the owner's console, 27 Oct 2026).  The Genesis plane has nothing in those cells, so
+ * the sky shows. */
+bool JJ1Level::oj32xNoWaterfall (const GridElement* ge) const {
+
+	return worldNum == 0 && (ge->tile == 59 || ge->tile == 179);
+
+}
+
 void JJ1Level::drawBand (SDL_Surface* target, int vX, int vY, int viewH, bool foreground) {
 
 	SDL_Rect src, dst;
@@ -642,6 +653,10 @@ void JJ1Level::drawBand (SDL_Surface* target, int vX, int vY, int viewH, bool fo
 				}
 
 			} else {
+
+				// the owner, 27 Oct 2026: Diamondus's giant waterfalls removed - foreground tiles a
+				// screen wide and tall that the 32X redrew every frame (4 fps there); the sky shows
+				if (oj32xNoWaterfall(ge)) continue;
 
 				if (ge->event == 123) {
 					dst.x = sx;
@@ -743,6 +758,15 @@ void JJ1Level::draw () {
 	}
 	genbg_frame(vX, vY);   // REV: the Genesis plane follows this picture (port/genbg.h)
 #ifndef __sh__
+	{   // REV test (PC only): T32X_WARP=x,y puts Jazz at that tile once, for pictures of a place
+		static bool warped;
+		const char* w = getenv("T32X_WARP");
+		int tx, ty;
+		if (!warped && w && sscanf(w, "%d,%d", &tx, &ty) == 2) {
+			localPlayer->getJJ1LevelPlayer()->reset(tx, ty);
+			warped = true;
+		}
+	}
 	if (getenv("T32X_TRACK")) {   // REV test: where Jazz is on the screen in each picture
 		JJ1LevelPlayer* lp = localPlayer->getJJ1LevelPlayer();
 		fprintf(stderr, "[track] %d %d %d %d\n", FTOI(lp->getX()) - vX, FTOI(lp->getY()) - vY, vX, vY);

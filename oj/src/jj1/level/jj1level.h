@@ -279,6 +279,8 @@ class JJ1Level : public Level {
 		/// which can split the screen between both SH2s (oj32x_parallel; off by default,
 		/// OJ32X_SLAVE_DRAWS in port/plat_mars.c - measured: no gain, shared bus).
 		void drawBand (SDL_Surface* target, int vX, int vY, int viewH, bool foreground);
+		/// Diamondus's giant waterfalls: their foreground tiles are not drawn (jj1levelframe.cpp)
+		bool oj32xNoWaterfall (const GridElement* ge) const;
 #ifdef OJ32X_SCROLL
 		/// PORT32X: the line-table scrolling renderer (description in jj1levelframe.cpp)
 		void scrollBg (int rx, int wy, int w, int h);
