@@ -116,14 +116,23 @@ static void wait_cmd(uint16_t cmd) {
     MARS_SYS_COMM0 = cmd;
     for (n = 0; n < 2000000UL && MARS_SYS_COMM0 != 0; n++) comm_pause();
 }
+/* CD32X (console, 27 Oct 2026, D32XR): BOUNDED.  These two were the only waits the copy loop could
+   reach that could not end - the loading screen's, and splash_progress calls flip_wait TWICE a chunk.
+   On the EverDrive a swap that did not come back froze the whole load with the picture stuck at
+   whatever the bar had drawn; the same disc with the picture off loaded through and started the game.
+   A frame buffer that does not answer is a reason to stop drawing, not to stop loading: the copy
+   itself asks nothing of the 32X VDP.  The bound is wait_cmd's, far longer than a swap ever needs. */
+#define FB_SPINS 2000000UL
 static void take_fb(void) {
+    uint32_t n;
     SC_SYS_ADAPTER_B = 0x80;
-    while ((MARS_SYS_INTMSK & 0x8000) == 0) { }
+    for (n = 0; n < FB_SPINS && (MARS_SYS_INTMSK & 0x8000) == 0; n++) { }
 }
 static void flip_wait(void) {
     uint16_t cur = SC_VDP_FBCTL & 1;
+    uint32_t n;
     SC_VDP_FBCTL = cur ^ 1;
-    while ((SC_VDP_FBCTL & 1) == cur);
+    for (n = 0; n < FB_SPINS && (SC_VDP_FBCTL & 1) == cur; n++) { }
 }
 
 static void halt(uint16_t code) {
