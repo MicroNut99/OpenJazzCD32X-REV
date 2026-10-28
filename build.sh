@@ -187,7 +187,9 @@ PY
 # name).  An EverDrive build is OpenJazzCD32X_EDCD_OPENJAZZ + EDCD_OPENJAZZ.32X ("OPENJAZZ" to match
 # EDCD_OPENLARA, not the "JAZZ" this used before); the 8 / 16 MB test discs keep the names they were
 # built under.  DISC_NAME overrides it - NOT NAME, which WSL fills with the Windows machine's name.
-EDCD_GAME="OPENJAZZ"
+# EDCD_GAME=<name> (default OPENJAZZ): the name in the disc's and the launcher's names, so a new version
+# never overwrites the last (the launcher's SD-card saves follow it: MEGA/gamedata/EDCD_<name>.32X/)
+EDCD_GAME="${EDCD_GAME:-OPENJAZZ}"
 EDCD_32X="EDCD_$EDCD_GAME.32X"
 if [ "$CART" = ED ]; then
   DISC_NAME="${DISC_NAME:-OpenJazzCD32X_EDCD_$EDCD_GAME}"
