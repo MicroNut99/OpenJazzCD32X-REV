@@ -89,6 +89,7 @@ Genesis, and what did fit would still leave the 32X drawing much of the picture.
 - A **4 MB RAM cart** in the 32X cartridge slot (the game keeps its data there)
   - or the **8 MB / 16 MB cart** (the 16MB-PCB-CD32X board)
     with the `CART=8` / `CART=16` disc (see *Building*)
+  - or the **Mega EverDrive PRO**, with the EverDrive disc and its launcher (see *Building*)
 - The game disc, burned from `OpenJazzCD32X.cue` (disc-at-once, 80-minute CD-R)
 
 Emulators without a 4 MB RAM cart (for example Fusion) cannot run it: the loader stops on the
@@ -103,19 +104,34 @@ splash screen.
   `LEVEL0.000`, ... from Jazz Jackrabbit CD). Optional: `JAZZXMAS1995/` (Holiday Hare '95) and
   the music as WAVs in `music/`. Both are copied from `../OpenJazzCD32X` when they are there.
 
-**The commands** - everything is made inside this folder, nothing outside it:
-
-| Cart | Command | The disc |
-|---|---|---|
-| 4 MB | `NAME=R1 bash tools/make_disc.sh` | `discs/R1/OpenJazzCD32X_R1.cue` |
-| 16 MB | `CART=16 bash tools/make_disc.sh` | `discs/R11-16MB/OpenJazzCD32X_R11-16MB.cue` |
-| 8 MB | `CART=8 bash tools/make_disc.sh` | `discs/R11-8MB/OpenJazzCD32X_R11-8MB.cue` |
-
-For example, from WSL:
+**Which command for which version** - everything is made inside this folder, nothing outside it.
+Every command starts with the `cd` line, so it works from any folder:
 ```
-cd /mnt/s/KoboPort/sega-toolchain-12.1/sega/OpenJazzCD32X-REV && \
-CART=16 bash tools/make_disc.sh
+cd /mnt/s/KoboPort/sega-toolchain-12.1/sega/OpenJazzCD32X-REV
 ```
+
+| Version | Runs on | Command after the `cd` | Makes |
+|---|---|---|---|
+| 4 MB | 4 MB RAM cart (disc boot) | `NAME=R1 bash tools/make_disc.sh` | `discs/R1/OpenJazzCD32X_R1.cue` |
+| 8 MB | 8 MB RAM cart (disc boot) | `CART=8 bash tools/make_disc.sh` | `discs/R11-8MB/OpenJazzCD32X_R11-8MB.cue` |
+| 16 MB | 16 MB RAM cart (disc boot) | `CART=16 bash tools/make_disc.sh` | `discs/R11-16MB/OpenJazzCD32X_R11-16MB.cue` |
+| EverDrive | Mega EverDrive PRO (cartridge boot) | `CART=ED EDCD=1 EDCD_SAVE=1 EDCD_GAME=OPENJAZZ5 LEVEL_PACKS=keep bash build.sh 2>&1 \| tee build_log.txt` | `cd32x/subcpu/OpenJazzCD32X_EDCD_OPENJAZZ5.cue` + the launcher `cd32x/subcpu/EDCD_OPENJAZZ5.32X` |
+
+**A new build of the same version gets a new name**, so it never overwrites the last one:
+`NAME=R12-16MB` (any name) for the disc-boot versions, the next number in `EDCD_GAME`
+(`OPENJAZZ5`, `OPENJAZZ6`, ...) for the EverDrive.
+
+**The EverDrive version:**
+- Burn the `.cue`; copy the launcher `EDCD_OPENJAZZ5.32X` to the EverDrive's SD card and start it
+  from the EverDrive's menu with the disc in the Sega CD (not "Run Mega-CD"). The disc only works
+  with its own launcher.
+- `EDCD_SAVE=1`: the saves and settings are kept in the EverDrive's save bank, on the SD card as
+  `MEGA/gamedata/EDCD_OPENJAZZ5.32X/bram.srm`. Each launcher name has its own saves, so a new
+  `EDCD_GAME` starts without the last one's. Without `EDCD_SAVE=1` the saves go to the cart's
+  RAM, which the EverDrive wipes at its menu.
+- It needs the CD32X BootCamp folder next to this one (`../CD32X-BootCamp`), or `BOOTCAMP=<folder>`.
+- `LEVEL_PACKS=keep`: the world and bonus packs already made are used again (they take several
+  minutes); the Genesis plane packs are always made again.
 
 **Options** (put them before `bash`, as `CART=16` above):
 - `NOMUSIC=1` - a disc without the music (one silent audio track): smaller and quicker to make,
@@ -124,7 +140,8 @@ CART=16 bash tools/make_disc.sh
   on the first boot instead of about ten, a short unpacking when a world starts); the disc name
   gets `-LZ`. Off by default.
 - `PROF=1` - the frame profiler box in levels; the disc name gets `-PROF`.
-- `NAME=...` - another disc name.
+- `NAME=...` - another disc name (`tools/make_disc.sh`; `build.sh` itself takes `DISC_NAME=`,
+  because WSL puts the computer's name in `NAME`).
 
 **What happens:** the build makes the data packs (the common pack, a pack per world and per bonus
 map, the Genesis plane packs, the bonus floors), the engine, the loader and the Sub-CPU program,

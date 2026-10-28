@@ -63,14 +63,18 @@ N=$(ls "$ROMS"/GB*.PAK 2>/dev/null | wc -l)
 [ "$N" -ge 20 ] || fail "only $N Genesis plane packs (GB*.PAK) were made"
 say "Genesis plane packs: $N"
 
-BIN=cd32x/subcpu/OpenJazzCD32X.bin
-CUE=cd32x/subcpu/OpenJazzCD32X.cue
+# build.sh's own name for the disc (since b75ba60 the 8 / 16 MB discs are OpenJazzCD32X_cart8 / _cart16;
+# this looked for OpenJazzCD32X.bin and so stopped on "the .cue is old" - or, within 4 hours of a 4 MB
+# build, copied that 4 MB disc under the 8 / 16 MB name)
+BASE="OpenJazzCD32X${CART:+_cart$CART}"
+BIN=cd32x/subcpu/$BASE.bin
+CUE=cd32x/subcpu/$BASE.cue
 [ -f "$BIN" ] && [ -f "$CUE" ] || fail "no .bin / .cue was made"
 [ "$(find "$CUE" -mmin -240 | wc -l)" -eq 1 ] || fail "the .cue is old - the build did not make a new disc"
 
 mkdir -p "$DISCS" || fail "cannot make $DISCS"
 cp "$BIN" "$DISCS/OpenJazzCD32X_$NAME.bin" || fail "copy to $DISCS failed"
-sed "s/OpenJazzCD32X\.bin/OpenJazzCD32X_$NAME.bin/" "$CUE" > "$DISCS/OpenJazzCD32X_$NAME.cue" || fail "the .cue could not be written"
+sed "s/$BASE\.bin/OpenJazzCD32X_$NAME.bin/" "$CUE" > "$DISCS/OpenJazzCD32X_$NAME.cue" || fail "the .cue could not be written"
 grep -q "OpenJazzCD32X_$NAME.bin" "$DISCS/OpenJazzCD32X_$NAME.cue" || fail "the .cue does not name the .bin"
 say "DONE. Burn this file:"
 WIN=$(echo "$DISCS" | sed 's#^/mnt/\([a-z]\)/#\U\1:\\#; s#/#\\#g')
