@@ -112,7 +112,7 @@ class Game {
 		void addLevelPlayer (Player *player);
 
 	public:
-#if defined(OJ32X_MARS) && defined(OJ32X_CART_ED)
+#if defined(OJ32X_MARS) && OJ32X_CART_MB
 		/* PORT32X ED-BONUS: the bonus level the level just won asks for, played by playLevel once that
 		 * level is gone (jj1level.cpp) - nested inside it the two did not fit the heap */
 		char*          pendingBonus = nullptr;

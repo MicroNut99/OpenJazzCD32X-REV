@@ -857,7 +857,7 @@ int JJ1Level::play () {
 			}
 
 			if (!multiplayer) {
-#if defined(OJ32X_MARS) && defined(OJ32X_CART_ED)
+#if defined(OJ32X_MARS) && OJ32X_CART_MB
 				// PORT32X ED-BONUS: the bonus level is played once this level is gone (game.cpp)
 				if (localPlayer->getJJ1LevelPlayer()->hasGem()) {
 					delete[] game->pendingBonus;
