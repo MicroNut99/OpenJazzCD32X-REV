@@ -112,6 +112,11 @@ else
   echo "==> no JAZZXMAS1995/ folder: no Holiday Hare '95"
   rm -f "$ROMS"/OJ6*.PAK "$ROMS/SFX01.BIN" "$ROMS/.hh95_complete"
 fi
+# OJ-SFXRATE (the 8 / 16 MB and EverDrive builds, oj/src/io/sound.cpp): each level names the sound of
+# each of its 32 slots and the rate it plays at - the engine finds the pack's effect by name, so it needs
+# the names (and lengths, for "is it still playing") of SOUNDS.000: port/oj32x_sfx_table.h, made here
+SFX_SRC="$DATA/SOUNDS.000"; [ -f "$HH95/SOUNDS.000" ] && SFX_SRC="$SFX_SRC $HH95/SOUNDS.000"
+python3 "$HERE/tools/make_oj_sfx.py" --header "$HERE/port/oj32x_sfx_table.h" $SFX_SRC
 # REV: the Genesis plane (docs/GENESIS_PLANE.md) - every level dumped by the PC build, converted
 # into Genesis tiles, palettes and maps, one GB<k>.PAK per world (loaded at cart 0x080000)
 echo "==> Genesis plane"

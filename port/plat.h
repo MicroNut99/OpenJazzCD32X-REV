@@ -226,6 +226,7 @@ void plat_parallel(void (*fn)(void *, int), void *arg);
 /* play sound effect n (OpenJazz SE::Type, 1..) - 32X: on the Sega CD's PCM chip, sent with
  * the next pad request; PC: nothing */
 void plat_sfx(int id);
+void plat_sfx_rate(int id, int rate);   /* OJ-SFXRATE: id at rate Hz (0 = the pack's own) */
 /* CD audio track n (0 = stop), repeating; n | 0x8000 plays it once (the credits' CD
  * player). Only in builds with OJ32X_MUSIC 1 (music tracks on the disc). */
 void plat_music(int track);

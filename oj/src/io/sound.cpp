@@ -27,6 +27,33 @@
 #ifdef OJ32X_MARS
 #include "oj32x.h"
 #endif
+/* PORT32X OJ-SFXRATE (the 8 / 16 MB and EverDrive builds): OpenJazz loads each level's own sound map -
+   for each of its 32 slots the name of a sound in SOUNDS.000 and the rate it plays at (MACHGUN1, the
+   blaster, at 13000 Hz; GODLIKE at 45000 in one slot and 10000 in another) - and resamples the sounds to
+   match.  The 32X build ignored it: slot n always played SOUNDS.000's sound n at 11025 Hz, so in a
+   level the blaster was 15 % too low, other slots played the wrong sound, and "is it still playing"
+   was always no (the end-of-level count restarted its tick every frame).  Now the slots remember their
+   sound and rate, the PCM chip plays it at that rate (cd32x/subcpu/main.c: COMM2 = the rate), and a
+   slot counts as playing for its sound's length.  The names come from SOUNDS.000 at build time
+   (tools/make_oj_sfx.py --header -> port/oj32x_sfx_table.h); without that file the old way stays. */
+#if defined(OJ32X_MARS) && defined(OJ32X_CART_MB) && OJ32X_CART_MB && __has_include("oj32x_sfx_table.h")
+#define OJ32X_SFXRATE 1
+#include "oj32x_sfx_table.h"
+#include <cstring>
+static unsigned char sfxSlotRaw[SE::MAX];      /* 1 + the raw sound's index, 0 = silent */
+static unsigned short sfxSlotRate[SE::MAX];    /* Hz; 0 = the pack's own rate (11025 Hz source) */
+static unsigned int sfxSlotUntil[SE::MAX];     /* SDL_GetTicks() until which it is playing */
+static void sfxSlotsDefault() {
+	for (int se = 0; se < SE::MAX; se++) {
+		sfxSlotRaw[se] = (se >= 1 && se <= OJ32X_SFX_RAW) ? se : 0;
+		sfxSlotRate[se] = 0;
+		sfxSlotUntil[se] = 0;
+	}
+}
+#else
+#define OJ32X_SFXRATE 0
+#line 29
+#endif
 #include "util.h"
 #include "io/log.h"
 #include "platforms/platforms.h"
@@ -567,6 +594,24 @@ bool loadSounds (const char *fileName) {
 void resampleSound (int index, const char* name, int rate) {
 	// Skip SE::NONE
 	int se = index + 1;
+#if OJ32X_SFXRATE
+	// PORT32X OJ-SFXRATE: remember the slot's sound and rate (see the top); a sound PC OpenJazz cannot
+	// find or convert stays silent here too
+	if (se < 1 || se >= SE::MAX) return;
+	sfxSlotRaw[se] = 0;
+	sfxSlotRate[se] = 0;
+	sfxSlotUntil[se] = 0;
+	if (!name || !name[0] || rate < 1000 || rate > 65535) return;
+	for (int r = 0; r < OJ32X_SFX_RAW; r++) {
+		if (strcmp(name, oj32x_sfx_name[r]) == 0) {
+			sfxSlotRaw[se] = r + 1;
+			sfxSlotRate[se] = (rate == 11025) ? 0 : rate;
+			break;
+		}
+	}
+	return;
+#endif
+#line 570
 
 	if(!isValidSoundIndex(static_cast<SE::Type>(se))) {
 		LOG_ERROR("Cannot resample Sound Index %d", se);
@@ -668,6 +713,11 @@ void resampleSound (int index, const char* name, int rate) {
  * Resample all sound clips to matching indices.
  */
 void resampleSounds() {
+#if OJ32X_SFXRATE
+	sfxSlotsDefault();   // PORT32X OJ-SFXRATE: slot n = SOUNDS.000's sound n at its own rate
+	return;
+#endif
+#line 671
 	for (int i = 0; i < nRawSounds; i++) {
 		resampleSound(i, rawSounds[i].name, 11025);
 	}
@@ -695,6 +745,22 @@ void playSound(SE::Type index) {
 #ifdef OJ32X_MARS
 	// PORT32X: sound effects play on the Sega CD's PCM chip, from a pack loaded at start-up
 	// (SFX00.BIN, made by tools/make_oj_sfx.py). Effects "volume" 0 means off.
+#if OJ32X_SFXRATE
+	{
+		static bool slotsSet = false;
+		if (!slotsSet) { sfxSlotsDefault(); slotsSet = true; }
+		if (index <= SE::NONE || index >= SE::MAX || soundVolume <= 0) return;
+		const int raw = sfxSlotRaw[index];
+		if (!raw) return;
+		const unsigned int rate = sfxSlotRate[index] ? sfxSlotRate[index] : 11025;
+		oj32x_sfx_rate(raw, sfxSlotRate[index]);
+		// playing for the sound's length at that rate (the PCM chip cannot be asked)
+		const unsigned int len = oj32x_sfx_len[oj32x_game_hh95() ? 1 : 0][raw - 1];
+		sfxSlotUntil[index] = SDL_GetTicks() + (len * 1000u) / rate;
+		return;
+	}
+#endif
+#line 698
 	if (index != SE::NONE && soundVolume > 0) oj32x_sfx(static_cast<int>(index));
 	return;
 #endif
@@ -725,6 +791,12 @@ void playSound(SE::Type index) {
  * @return Whether the sound is playing
  */
 bool isSoundPlaying (SE::Type index) {
+#if OJ32X_SFXRATE
+	// PORT32X OJ-SFXRATE: for the sound's length after it was started (see playSound)
+	if (index <= SE::NONE || index >= SE::MAX) return false;
+	return (int)(sfxSlotUntil[index] - SDL_GetTicks()) > 0;
+#endif
+#line 728
 	if (!soundsLoaded || !isValidSoundIndex(index)) return false;
 
 	return (sounds[index].position > 0);

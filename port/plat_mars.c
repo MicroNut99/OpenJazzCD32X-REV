@@ -343,6 +343,9 @@ static int send_cmd_rv(uint16_t cmd, uint32_t tries)
  * trip (main.c CMD 48) in the middle of each frame. The pad is read at the end of the frame, as
  * fresh as before. A waiting sound effect rides on it (main.c K33: COMM0 = 48 | n << 8). */
 static volatile uint16_t sfx_pending;
+#if OJ32X_CART_MB
+static volatile uint16_t sfx_rate_pending;   /* OJ-SFXRATE: its rate in Hz (0 = the pack's own) */
+#endif
 static int pad_asked;
 static uint16_t pad_value;
 
@@ -357,6 +360,9 @@ static void pad_ask(void)
 	if (pad_asked || MARS_COMM0 != 0) return;
 	const uint16_t fx = sfx_pending;
 	sfx_pending = 0;
+#if OJ32X_CART_MB
+	if (fx) MARS_COMM2 = sfx_rate_pending;   /* OJ-SFXRATE: main.c reads it with the effect */
+#endif
 	MARS_COMM0 = (uint16_t)(CMD_GET_PAD | (fx << 8));
 	pad_asked = 1;
 }
@@ -791,9 +797,28 @@ uint32_t plat_random_seed(void)
  * while Holiday Hare '95 runs). One waiting effect is sent with the next pad request. */
 void plat_sfx(int id)
 {
+#if OJ32X_CART_MB
+	if (id > 0 && id < 256) {
+		sfx_rate_pending = 0;
+		sfx_pending = (uint16_t)id;
+	}
+#else
 	if (id > 0 && id < 256)
 		sfx_pending = (uint16_t)id;
+#endif
 }
+
+#if OJ32X_CART_MB
+/* OJ-SFXRATE (8 / 16 MB and EverDrive builds): the effect at the rate its level gives its slot - the
+ * rate goes in COMM2 with the pad request, and main.c scales the effect's PCM step by rate / 11025 */
+void plat_sfx_rate(int id, int rate)
+{
+	if (id > 0 && id < 256) {
+		sfx_rate_pending = (uint16_t)(rate > 0 && rate < 65536 ? rate : 0);
+		sfx_pending = (uint16_t)id;
+	}
+}
+#endif
 
 /* MUSIC SWITCH: 1 = CD audio tracks 2-41 for the music (build.sh sets it when music/*.wav
  * exist); 0 = no music (no such tracks on the disc - do not ask for them). */
@@ -837,6 +862,13 @@ uint16_t plat_read_pad(void)
 	/* a waiting sound effect rides on the pad request (main.c K33: COMM0 = 48 | n << 8) */
 	const uint16_t fx = sfx_pending;
 	sfx_pending = 0;
+#if OJ32X_CART_MB
+	if (fx) {                                /* OJ-SFXRATE: main.c reads it with the effect - */
+		bmd_collect();                       /* only once nothing sent ahead can still be reading */
+		pad_collect(40000UL);                /* its own COMM2 (send_cmd does the same next) */
+		MARS_COMM2 = sfx_rate_pending;
+	}
+#endif
 	if (!send_cmd((uint16_t)(CMD_GET_PAD | (fx << 8)), 40000UL))
 		return pad;
 

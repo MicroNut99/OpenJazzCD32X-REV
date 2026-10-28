@@ -60,3 +60,4 @@ mars/obj_cart*/
 host/obj_*/
 host/openjazz32x_host_*
 mars/obj_*/
+port/oj32x_sfx_table.h

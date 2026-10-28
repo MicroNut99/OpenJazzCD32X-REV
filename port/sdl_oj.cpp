@@ -1221,6 +1221,10 @@ static const char *prof_text_line(int line) { return oj32x_prof_text(line); }
 void oj32x_clear_screens(void) { plat_clear_screens(); }
 
 void oj32x_sfx(int id) { plat_sfx(id); }
+#if defined(OJ32X_CART_MB) && OJ32X_CART_MB
+void oj32x_sfx_rate(int id, int rate) { plat_sfx_rate(id, rate); }   /* OJ-SFXRATE (sound.cpp) */
+int  oj32x_game_hh95(void) { return plat_game(); }
+#endif
 void oj32x_set_game(int g) { plat_set_game(g); }
 bool oj32x_hh95_available(void) { return plat_hh95_available() != 0; }
 int oj32x_port_setting(int key) { return plat_port_setting(key); }

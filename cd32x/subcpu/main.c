@@ -897,6 +897,26 @@ static void pcm_play(int id) {
     write_byte(PCM_ONOFF, pcm_onoff);
 }
 
+#ifdef CART_PAGED
+/* OJ-SFXRATE (the 8 / 16 MB and EverDrive builds, oj/src/io/sound.cpp): each level gives each sound the
+   rate it plays at (the blaster at 13000 Hz, ...); the SH2 sends it in COMM2 with the effect, 0 = the
+   pack's own.  The pack's step plays the sound as if it were 11025 Hz, so the step is scaled by rate /
+   11025.  The default (4 MB) program never gets here: it is built as before. */
+static void pcm_play_rate(int id, uint32_t rate) {
+    uint16_t keep;
+    uint32_t fd;
+    if (id < 1 || id > sfx_count) return;
+    if (rate == 0 || rate == 11025) { pcm_play(id); return; }
+    keep = sfx_tab[id].fd;
+    fd = ((uint32_t)keep * rate + 5512) / 11025;
+    if (fd < 1) fd = 1;
+    if (fd > 0xFFFF) fd = 0xFFFF;
+    sfx_tab[id].fd = (uint16_t)fd;
+    pcm_play(id);
+    sfx_tab[id].fd = keep;
+}
+#endif
+
 /* CMD 53: KOBOSFX.BIN -> PCM wave RAM.  Returns the number of effects (0 = failed). */
 static int pcm_load(const char *name) {           /* OL-6: SFX<level>.BIN */
     int64_t fi = scd_open_file(name);
@@ -1188,7 +1208,13 @@ int main(void)
            up and scrolled with pad = 0.  Answer CMD 48 first and start the next pass. */
         if ((cmd & 0xFF) == 48) {
             uint16_t pad = GET_PAD(0);
+#ifdef CART_PAGED
+            if (cmd >> 8)                       /* OJ-SFXRATE: COMM2 = the rate the level plays it at */
+                pcm_play_rate(sfx_has_map ? sfx_map[((cmd >> 8) - 1) & 0xFF] : (cmd >> 8),
+                              (uint32_t)(do_md_cmd1(MD_CMD_READ_32X_16, 0xA15122) & 0xFFFF));
+#else
             if (cmd >> 8) pcm_play(sfx_has_map ? sfx_map[((cmd >> 8) - 1) & 0xFF] : (cmd >> 8));   /* OL-6 */           /* K33: sound effect requested */
+#endif
             /* K32: reply = pad (COMM8, upper 16 bits) + the 68K's vblank counter (COMM10, lower
                16 bits) in ONE 32-bit write.  The SH2 uses the counter to run Kobo's logic at
                its fixed 30 ms step, whatever the frame rate.  COMM10 is only used by the

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """make_oj_sfx.py - Jazz Jackrabbit's sound effects -> a Sega CD PCM pack
     python3 tools/make_oj_sfx.py <data folder>/SOUNDS.000 cd32x/subcpu/ROMS/SFX00.BIN
+    python3 tools/make_oj_sfx.py --header port/oj32x_sfx_table.h <SOUNDS.000> [<HH95 SOUNDS.000>]
 
 The pack format is OpenLara's / Kobo's KSFX (cd32x/subcpu/main.c pcm_load, CMD 53 with
 COMM2 = 0 loads SFX00.BIN into the PCM chip's 64 KB; an effect plays when the SH2 puts its
@@ -65,7 +66,46 @@ def resample(a, src, dst):
         out.append(a[j] * (1 - f) + a[min(j + 1, len(a) - 1)] * f)
     return out
 
+def raw_names_lengths(path):
+    d = open(path, "rb").read()
+    if d[:3] != b"sfx" or d[3] != 0x1A:
+        sys.exit("*** %s: not a Jazz Jackrabbit sound file" % path)
+    head, = struct.unpack("<i", d[-4:])
+    out = []
+    for i in range((len(d) - head) // 18):
+        e = d[head + i * 18: head + i * 18 + 18]
+        ln, = struct.unpack("<H", e[16:18])
+        out.append((e[:12].split(b"\0")[0].decode("latin1"), min(ln, int(MAX_SECS * SRC_RATE))))
+    return out
+
+def header(out_h, paths):
+    """--header: the raw sounds' names and lengths for the engine (oj/src/io/sound.cpp, OJ-SFXRATE):
+    a level names the sound of each of its 32 slots and the rate it plays at, and the engine finds the
+    pack's effect by that name.  Lengths in samples as packed (cut at MAX_SECS), one row per game
+    (Jazz CD, Holiday Hare '95; the second row repeats the first when there is no HH95)."""
+    games = [raw_names_lengths(p) for p in paths]
+    names = [n for n, _ in games[0]]
+    for g in games[1:]:
+        if [n for n, _ in g] != names:
+            print("  *** the second SOUNDS.000 names its sounds differently - its lengths are not used")
+            games = games[:1]
+    while len(games) < 2:
+        games.append(games[0])
+    with open(out_h, "w") as f:
+        f.write("/* made by tools/make_oj_sfx.py --header from SOUNDS.000 - not in the repository */\n")
+        f.write("#define OJ32X_SFX_RAW %d\n" % len(names))
+        f.write("static const char oj32x_sfx_name[OJ32X_SFX_RAW][13] = {\n")
+        f.write(",\n".join('    "%s"' % n for n in names) + "\n};\n")
+        f.write("static const unsigned short oj32x_sfx_len[2][OJ32X_SFX_RAW] = {\n")
+        for g in games:
+            f.write("    { " + ", ".join(str(l) for _, l in g) + " },\n")
+        f.write("};\n")
+    print("  %s: %d sound names for the levels' sound maps" % (out_h, len(names)))
+
 def main():
+    if len(sys.argv) >= 4 and sys.argv[1] == "--header":
+        header(sys.argv[2], sys.argv[3:])
+        return
     if len(sys.argv) != 3:
         sys.exit(__doc__)
     d = open(sys.argv[1], "rb").read()

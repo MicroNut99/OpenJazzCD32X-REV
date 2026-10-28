@@ -972,6 +972,26 @@ int JJ1Level::play () {
 
 				int bonusCount = (ticks - prevTicks) / 100;
 				if (!bonusCount) bonusCount = 1;
+#if defined(OJ32X_MARS) && OJ32X_CART_MB
+				// PORT32X OJ-COUNT (8 / 16 MB and EverDrive builds): the time bonus counts down in about
+				// a second and a half whatever the frame rate (OpenJazz counts 10 a second, one a frame
+				// at most: half a minute at the 32X's frame rate), and any button pressed after the
+				// count has begun - once nothing is held from the level - adds the rest at once
+				if (timeBonus > 0) {
+					static int countFrom = 0;
+					static bool countArmed = false;
+					if (countFrom < timeBonus) { countFrom = timeBonus; countArmed = false; }
+					int fast = (countFrom * (int)(ticks - prevTicks)) / 1500;
+					if (fast > bonusCount) bonusCount = fast;
+					bool held = false;
+					for (int c = C_JUMP; c <= C_STATS; c++)
+						if (c != C_ESCAPE && controls.getState(c)) held = true;
+					if (!held) countArmed = true;
+					else if (countArmed) bonusCount = timeBonus;
+					if (bonusCount >= timeBonus) countFrom = 0;
+				}
+#endif
+#line 975
 
 				if (timeBonus == -1) {
 

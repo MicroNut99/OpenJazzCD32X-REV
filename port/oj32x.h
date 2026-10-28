@@ -59,6 +59,9 @@ void oj32x_bonusmd_stop(void);
 
 /* a sound effect (32X: Sega CD PCM chip; PC: nothing) */
 void oj32x_sfx(int id);
+/* OJ-SFXRATE: effect id (1 + SOUNDS.000 index) played at rate Hz (0 = the pack's own); which game runs */
+void oj32x_sfx_rate(int id, int rate);
+int  oj32x_game_hh95(void);
 
 /* a CD audio track directly (credits screen); 0 = stop */
 void oj32x_music_track(int track);
