@@ -69,6 +69,9 @@ Game::Game () {
 Game::~Game () {
 
 	if (levelFile) delete[] levelFile;
+#if defined(OJ32X_MARS) && defined(OJ32X_CART_ED)
+	delete[] pendingBonus;
+#endif
 
 	if (players) delete[] players;
 	localPlayer = NULL;
@@ -302,6 +305,26 @@ int Game::playLevel (char* fileName, bool intro, bool checkpoint) {
 
 		delete level;
 		baseLevel = level = NULL;
+
+#if defined(OJ32X_MARS) && defined(OJ32X_CART_ED)
+		/* PORT32X ED-BONUS (console, EDCD build, 27 Oct 2026: "OUT OF MEMORY: NEW OF 5984 BYTES (TOP 186112
+		 * OF 188160)", last log "COULD NOT CREATE SURFACE: OUT OF MEMORY" after OPEN BONUSMAP.000): OpenJazz
+		 * plays the bonus level from inside the level that was won (JJ1Level::playBonus), so the 32X's
+		 * heap had to hold both.  The level only asks for it (pendingBonus) and the bonus plays here,
+		 * with that level deleted - as from the episode menu ("Z BONUS LEVELS"), which always fitted.
+		 * The level has set the next level already: its type is kept across the bonus. */
+		if (pendingBonus) {
+
+			char *bonusFile = pendingBonus;
+			pendingBonus = nullptr;
+			const LevelType nextType = levelType;
+			const int bonusRet = playLevel(bonusFile);
+			levelType = nextType;
+			delete[] bonusFile;
+			if (bonusRet < 0) return bonusRet;
+
+		}
+#endif
 
 	}
 
