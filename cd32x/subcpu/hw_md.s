@@ -362,11 +362,13 @@ md_check:
 | cartridge boot.  Word RAM 0x200000-0x3FFFFF -> 0x600000-0x7FFFFF; the cart 0x400000-0x7FFFFF ->
 | 0x000000-0x3FFFFF (with RV = 1, as every cart routine here sets it).  Commands 19-22 (32X register
 | reads and writes) are left alone: their values are data (pads, lengths, chunk numbers), not addresses.
+| MODE1-10: except command 21 reading Word RAM (the bonus floor's header, main.c bmd_load): that address
+| moves (no 32X register is in 0x200000-0x3FFFFF).  Before, it read the cart: the floor was never loaded.
 m1_arg:
         cmpi.b  #19,d0
         blo.b   1f
         cmpi.b  #22,d0
-        bls.b   9f
+        bls.b   3f
 1:
         cmpi.l  #0x200000,d1
         blo.b   9f
@@ -378,6 +380,15 @@ m1_arg:
         rts
 2:
         subi.l  #0x400000,d1            /* the cart */
+        rts
+3:
+        cmpi.b  #21,d0                  /* MODE1-10: command 21, Word RAM only */
+        bne.b   9f
+        cmpi.l  #0x200000,d1
+        blo.b   9f
+        cmpi.l  #0x400000,d1
+        bhs.b   9f
+        addi.l  #0x400000,d1
 9:
         rts
         .endif

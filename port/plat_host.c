@@ -1272,6 +1272,12 @@ void plat_parallel(void (*fn)(void *, int), void *arg)
 }
 
 void plat_sfx(int id) { (void)id; }
+#if OJ32X_CART_MB
+/* OJ-SFXRATE (sdl_oj.cpp oj32x_sfx_rate): the PC build plays no sound effects.  Without this the CART=8 /
+ * CART=16 builds stopped at their PC build (undefined plat_sfx_rate) since 3c52235; CART=ED's PC build has
+ * OJ32X_CART_MB=ED, which #if reads as 0, so the EverDrive build never missed it */
+void plat_sfx_rate(int id, int rate) { (void)id; (void)rate; }
+#endif
 void plat_music(int track) { (void)track; }
 void plat_border_colour(int index) { (void)index; }
 void plat_clear_screens(void) { }

@@ -41,7 +41,7 @@ OJGB v4, big-endian, offsets from the start of the file:
   38  u16 plane B: 0 black cells, 1 the 2D parallax texture, 2 the 1D diagonal stripes
   40  4 x u16 the texture's name-table words (1: one pattern; 2: cell (u, v) word (u + v) % 4)
 """
-import struct, sys
+import os, re, struct, sys
 import numpy as np
 
 TKEY = 127
@@ -87,7 +87,62 @@ def load_dump(path):
     put = []                                               # tiles the game puts in during play
     if d[o:o + 4] == b'OJGS':
         put = [t for t in d[o + 5:o + 5 + d[o + 4]] if t < nt]
-    return dict(type=typ, sky=sky, orb=orb, pal=pal, spal=spal, tiles=tiles, grid=grid, put=put)
+    m = re.match(r'GB(\d+)_\d+\.DMP$', os.path.basename(path), re.I)   # GB<world>_<level>.DMP
+    return dict(type=typ, sky=sky, orb=orb, pal=pal, spal=spal, tiles=tiles, grid=grid, put=put,
+                world=int(m.group(1)) if m else -1)
+
+
+# Diamondus's giant waterfalls (world 0): the engine no longer draws their foreground tiles, 59 the water
+# and 179 the water under a rock lip (JJ1Level::oj32xNoWaterfall, jj1levelframe.cpp).  Many of their cells
+# have the black background flag, so a black band was left where a waterfall fell past the sky (the
+# owner's console, 28 Oct 2026).  Each such cell now shows what lies beside it in its row: the black of a
+# cave or the sky.
+WATERFALL_TILES = (59, 179)
+
+
+def waterfall_black(dump, blk):
+    """the black cells with the removed waterfalls' cells decided by their neighbours"""
+    grid, tiles = dump['grid'], dump['tiles']
+    if dump.get('world') != 0:
+        return blk
+    tile, fg = grid[:, :, 0], (grid[:, :, 1] & 2) != 0
+    gone = fg & np.isin(tile, WATERFALL_TILES)
+    if not gone.any():
+        return blk
+    nt = len(tiles)
+
+    def side(y, x, px):
+        """(black, sky) pixels of cell (y, x)'s pixel column px, as the Genesis + 32X show them"""
+        if not (0 <= x < 256):
+            return 32, 0                                   # beyond the level: black
+        t = int(tile[y, x])
+        see = np.ones(32, bool)
+        if not fg[y, x] and t < nt:
+            see = tiles[t][:, px] == TKEY                  # the tile's see-through pixels
+        n = int(see.sum())
+        return (n, 0) if blk[y, x] else (0, n)
+
+    out = blk.copy()
+    for y in range(64):
+        x = 0
+        while x < 256:
+            if not gone[y, x]:
+                x += 1
+                continue
+            x1 = x
+            while x1 < 256 and gone[y, x1]:
+                x1 += 1
+            if blk[y, x:x1].any():                         # a run with no black cell stays sky
+                bl, bs = side(y, x - 1, 31)
+                rl, rs = side(y, x1, 0)
+                b, k = bl + rl, bs + rs
+                if b == k:                                 # both sides solid (or even): as the row above
+                    v = out[y - 1, x:x1] if y > 0 and gone[y - 1, x:x1].all() else blk[y, x:x1]
+                else:
+                    v = b > k
+                out[y, x:x1] = v
+            x = x1
+    return out
 
 
 def q9(rgb):
@@ -370,7 +425,7 @@ def convert_tiles(dump, used, budget, merge_ok):
     mp = grid[:, :, 0].copy()
     mp[~on_plane] = 255
     mp[(mp >= nt) | ~tile_ok[np.minimum(mp, nt - 1)]] = 255
-    blk = (grid[:, :, 1] & 1) != 0
+    blk = waterfall_black(dump, (grid[:, :, 1] & 1) != 0)
     if mode:
         mp[blk & (mp == 255)] = nt                         # black cells: the black tile
         blk = np.zeros_like(blk)

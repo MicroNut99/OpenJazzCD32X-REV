@@ -36,6 +36,13 @@ makes from one level:
 - 16 name-table words per tile, the map (tile per cell, 255 = nothing: foreground tiles), the
   black cells (a bit map).
 
+Diamondus's giant waterfalls (world 0, foreground tiles 59 and 179) are not drawn
+(`JJ1Level::oj32xNoWaterfall`, 27 Oct 2026: 4 frames a second in front of them). Many of their
+cells have the black background flag, which left black bands in the sky. The converter now gives
+each of those cells what lies beside it in its row (`waterfall_black`): the black of a cave when
+the cells on both sides show black, the sky when they show sky; a run of them with no black cell
+stays sky. Diamondus 1: 56 cells changed, Diamondus 2: 24.
+
 `tools/genesis_pack.py` puts a world's levels into one pack, `GB<k>.PAK` (k = the world pack's
 number). Jazz CD: all 78 levels (R3).
 

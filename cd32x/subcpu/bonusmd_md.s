@@ -33,9 +33,20 @@
         .equ    bmv_token, 2            /* w: the SH2's floor bit last copied (-1: none yet) */
         .equ    bmv_pend,  4            /* w: 1 = a floor waits in Word RAM */
         .equ    bmv_two,   6            /* w: 1 = two layers (the file's byte 79), 0 = plane A only */
+        .if OL_MODE1
+| MODE1-10 (EDCD, the cartridge boot from the Mega EverDrive PRO): the 68000 sees Word RAM at 0x600000
+| (0x200000 is the cart there), and its level 4 interrupt goes through the RAM jump table the launcher
+| builds (0xFFFD0C, edboot/edcd_md.s), not through the Mega CD's vector register.  Before this the EDCD
+| build read the floor's colours and copied the floor from the cart, and the H interrupt that turns the
+| display on at line 126 went to an rte: the bonus floor was never shown there.
+        .equ    BM_IMG_A,  0x630000
+        .equ    BM_IMG_B,  0x634000
+        .equ    BM_HEAD,   0x63A000
+        .else
         .equ    BM_IMG_A,  0x230000
         .equ    BM_IMG_B,  0x234000
         .equ    BM_HEAD,   0x23A000
+        .endif
 
 | d0.w = VRAM address -> VDP write command at 0xC00004 (uses d0-d1)
 bm_vram_w:
@@ -145,9 +156,13 @@ bmd_setup:
         move.w  #1,BM_V+bmv_two
 3:
         lea     bmd_hint(pc),a0         /* the H interrupt: the Mega CD's level 4 vector register */
+        .if OL_MODE1
+        move.l  a0,0xFFFD0E             /* MODE1-10: the launcher's jump table, "jmp" at 0xFFFD0C */
+        .else
         move.l  a0,d0                   /* (0xA12006, the low word of 0xFFxxxx), and the 32X's */
         move.w  d0,0xA12006             /* (0x70) for a console that takes it from there */
         move.l  a0,0x000070
+        .endif
         move.w  #0x8A00+126,(a5)        /* at line 126 */
         move.w  #0x8014,(a5)            /* H interrupts on */
         move.w  #1,BM_V+bmv_on
@@ -180,9 +195,15 @@ bm_dma_now:
         move.w  #0x8F02,0xC00004
         move.w  #0x9380,0xC00004        /* 7040 words */
         move.w  #0x941B,0xC00004
+        .if OL_MODE1
+        move.w  #0x9501,0xC00004        /* MODE1-10 layer A: (0x630002) >> 1 = 0x318001 */
+        move.w  #0x9680,0xC00004
+        move.w  #0x9731,0xC00004
+        .else
         move.w  #0x9501,0xC00004        /* layer A: (0x230002) >> 1 = 0x118001 */
         move.w  #0x9680,0xC00004
         move.w  #0x9711,0xC00004
+        .endif
         move.l  #0x40200080,d1          /* VRAM 0x0020 */
         lea     BM_IMG_A,a0
         bsr.w   bm_dma_layer
@@ -190,9 +211,15 @@ bm_dma_now:
         beq.b   1f
         move.w  #0x9380,0xC00004
         move.w  #0x941B,0xC00004
+        .if OL_MODE1
+        move.w  #0x9501,0xC00004        /* MODE1-10 layer B: (0x634002) >> 1 = 0x31A001 */
+        move.w  #0x96A0,0xC00004
+        move.w  #0x9731,0xC00004
+        .else
         move.w  #0x9501,0xC00004        /* layer B: (0x234002) >> 1 = 0x11A001 */
         move.w  #0x96A0,0xC00004
         move.w  #0x9711,0xC00004
+        .endif
         move.l  #0x78200080,d1          /* VRAM 0x3820 */
         lea     BM_IMG_B,a0
         bsr.w   bm_dma_layer

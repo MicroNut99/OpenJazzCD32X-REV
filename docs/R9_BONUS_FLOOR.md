@@ -77,5 +77,23 @@ Where both planes have colour 0 the 32X's hole colour shows: one more colour.
   Genesis plane.
 - The 4 MB and the 16 MB builds.
 
+## The EverDrive build (EDCD, 28 Oct 2026)
+
+The EDCD launcher starts the game as a cartridge boot (the Sega CD's mode 1), where the 68000 sees
+Word RAM at 0x600000 (0x200000 is the cart) and its level 4 interrupt goes through the RAM jump
+table the launcher builds (0xFFFD0C). The floor code only knew the disc boot's map, so on the
+EverDrive the header's magic was read from the cart, never matched, and the 32X drew the floor:
+**3 pictures a second** (the owner's console: "back to crap"). The bonus level had never been
+reached on the EverDrive before ED-BONUS (it ran out of memory), so nobody had seen it there.
+
+MODE1-10 (in the launcher's program only; the disc's programs are byte for byte the same):
+- `hw_md.s` `m1_arg`: command 21's address moves to 0x600000 when it is in Word RAM (no 32X
+  register is there), so `bmd_load` reads the header;
+- `bonusmd_md.s`: the header, the layers and the DMA source at 0x63xxxx; the H interrupt into
+  the launcher's jump table at 0xFFFD0E.
+
+ares, the EverDrive launcher, BONUSMAP.000 from the episode menu: **30 pictures a second**
+(before: 3), the floor as on the disc boot.
+
 Test builds: `EXTRA_DEFS="-DOJ32X_BMD_CHECK"` (from the 700th frame the 32X draws the floor
 again), `-DOJ32X_BMD_TEST_MAP=n` (every bonus level is BONUSMAP.n).
