@@ -32,8 +32,22 @@ mkdir -p "$ROMS"
 #                                     the launcher's program (CART_EDSAVE, listener M1SAVE=1, RA header);
 #                                     the disc is the same either way (the game asks the Sub-CPU, CMD 62)
 # Without EDCD_SAVE the saves go to the cart's page 1, which the EverDrive wipes at its menu.
+#   FX=1                              (with CART=ED EDCD=1) OJ32X_FX: the levels drawn by the CD32X cart
+#                                     compositor on the EverDrive PRO's FPGA (the BootCamp's cartfx/, its
+#                                     Jazz core as mega-pro.rbf beside the launcher): the whole picture in
+#                                     256 colours, the Genesis plane off; each world's GB<k>.PAK is its
+#                                     engine pack (tools/bake_fx.sh). Without the core the game draws as
+#                                     the REV build, with the Genesis plane off (and its tiles on the 32X).
 CART="${CART:-}"
 case "$CART" in ""|8|16|ED) ;; *) echo "*** CART must be 8, 16 or ED (or unset) - stopping"; exit 1;; esac
+FX="${FX:-}"
+BOOTCAMP="${BOOTCAMP:-$HERE/../CD32X-BootCamp}"
+if [ -n "$FX" ]; then
+  { [ "$CART" = ED ] && [ "${EDCD:-0}" = 1 ]; } || { echo "*** FX=1 is the EverDrive PRO build: CART=ED EDCD=1 - stopping"; exit 1; }
+  [ "${LZ:-0}" = 1 ] && { echo "*** FX=1 does not take LZ=1 - stopping"; exit 1; }
+  [ -f "$BOOTCAMP/cartfx/model/cartfx.h" ] || { echo "*** FX=1 needs the CD32X BootCamp's cartfx/ (BOOTCAMP=<folder>): not at $BOOTCAMP - stopping"; exit 1; }
+  echo "==> FX: the levels drawn by the cart compositor (the BootCamp's cartfx/)"
+fi
 [ -n "$CART" ] && echo "==> cart: the $CART MB test build"
 [ "$CART" = ED ] && echo "==> cart: the Mega EverDrive PRO (16 MB, pages 1-6)"
 # R11: LZ=1 - the world packs compressed in the cart (R8); default 0: as on the disc
@@ -117,10 +131,18 @@ fi
 # the names (and lengths, for "is it still playing") of SOUNDS.000: port/oj32x_sfx_table.h, made here
 SFX_SRC="$DATA/SOUNDS.000"; [ -f "$HH95/SOUNDS.000" ] && SFX_SRC="$SFX_SRC $HH95/SOUNDS.000"
 python3 "$HERE/tools/make_oj_sfx.py" --header "$HERE/port/oj32x_sfx_table.h" $SFX_SRC
+rm -f "$ROMS"/GB*.PAK
+if [ -n "$FX" ]; then
+# OJ32X_FX: each world's GB<k>.PAK is its engine pack (the cart compositor's tiles, sprites and tables)
+echo "==> engine packs (tools/bake_fx.sh)"
+"$HERE/tools/bake_fx.sh" "$DATA" "$ROMS/IMAGE8.RAW" "$ROMS" "$BOOTCAMP"
+if [ -f "$HH95/PANEL.000" ]; then
+  "$HERE/tools/bake_fx.sh" "$HH95" "$ROMS/IMAGE8.RAW" "$ROMS" "$BOOTCAMP" 100
+fi
+else
 # REV: the Genesis plane (docs/GENESIS_PLANE.md) - every level dumped by the PC build, converted
 # into Genesis tiles, palettes and maps, one GB<k>.PAK per world (loaded at cart 0x080000)
 echo "==> Genesis plane"
-rm -f "$ROMS"/GB*.PAK
 GB_DUMPS="$(mktemp -d)"
 "$HERE/tools/dump_levels.sh" "$DATA" "$GB_DUMPS/jazz" "$ROMS/IMAGE8.RAW"
 python3 "$HERE/tools/genesis_pack.py" "$GB_DUMPS/jazz" "$ROMS" 0
@@ -129,6 +151,7 @@ if [ -f "$HH95/PANEL.000" ]; then
   python3 "$HERE/tools/genesis_pack.py" "$GB_DUMPS/hh95" "$ROMS" 100
 fi
 rm -rf "$GB_DUMPS"
+fi
 # R9: the bonus levels' floor for the Sega CD's graphics chip, GB800-GB829 (docs/R9_BONUS_FLOOR.md)
 echo "==> bonus floors (tools/bonus_md/make_bonus_md.py)"
 python3 "$HERE/tools/bonus_md/make_bonus_md.py" "$DATA" "$ROMS"
@@ -154,7 +177,7 @@ rm -f "$HERE"/mars/obj*/port/plat_mars.o "$HERE"/mars/obj*/port/plat_mars.d   # 
 # R5: the 4 MB and the CART builds keep their own objects: link the engine again every time
 rm -f "$HERE/mars/openjazz32x.elf" "$HERE/mars/openjazz32x.bin" "$HERE/mars/OPENJAZZ.32X"
 python3 "$HERE/tools/music_lengths.py" "$HERE/tools/music_tracks.txt" "$HERE/music" "$HERE/port/music_lengths.h"   # CD player
-echo "==> engine";      make -C "$HERE/mars" EXTRA_DEFS="$MUSIC_DEFS" CART="$CART" PROF="$PROF" LZ="$LZ"
+echo "==> engine";      make -C "$HERE/mars" EXTRA_DEFS="$MUSIC_DEFS" CART="$CART" PROF="$PROF" LZ="$LZ" FX="$FX" BOOTCAMP="$BOOTCAMP"
 [ -f "$HERE/mars/OPENJAZZ.32X" ] || { echo "*** mars/OPENJAZZ.32X was not made - stopping"; exit 1; }
 # REV: the engine sits in the cart from 0; the Genesis plane's files from 0x080000
 ENGINE_SIZE=$(stat -c %s "$HERE/mars/OPENJAZZ.32X")
@@ -215,7 +238,7 @@ echo "    burn:     cd32x/subcpu/$DISC_NAME.cue, or the plain cd32x/subcpu/CDROM
 # this disc's Sub-CPU program built a second time for the cartridge boot (MODE1=1 M1PAGE=1, in a copy
 # of cd32x/subcpu: the disc keeps the normal program)
 if [ "${EDCD:-0}" = 1 ]; then
-  BC="${BOOTCAMP:-$HERE/../CD32X-BootCamp}"
+  BC="$BOOTCAMP"
   [ -f "$BC/edboot/build_edcd.sh" ] || { echo "*** EDCD=1 needs the CD32X BootCamp next to this folder (or BOOTCAMP=<folder>): not at $BC"; exit 1; }
   echo "==> $EDCD_32X: the disc started from the EverDrive PRO (cartridge boot)"
   T=$(mktemp -d); mkdir -p "$T/subcpu/ROMS" "$T/sh2"

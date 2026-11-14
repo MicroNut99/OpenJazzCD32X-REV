@@ -55,7 +55,12 @@ extern "C" {
  * (page 0), so window 1 (0x200000-0x3FFFFF) holds only packs: the home slot (page 1) or a
  * cached page 2-7. A world's Genesis plane pack follows its world pack in the same page. */
 #define PACK_LEVEL_CART  0x200000u
+#ifdef OJ32X_FX
+#define PACK_LEVEL_MAX   0x1E0000u   /* OJ32X_FX: up to 0x3E0000 - the last 128 KB of a page are the
+                                        cart compositor's window once it is on (CD32X-BootCamp cartfx/) */
+#else
 #define PACK_LEVEL_MAX   0x1F0000u   /* up to 0x3F0000 (page 1: the save area; 2-7: the tail) */
+#endif
 #else
 #define PACK_LEVEL_CART  0x280000u
 #define PACK_LEVEL_MAX   0x170000u   /* up to 0x3F0000, where saves begin */
@@ -88,6 +93,9 @@ bool pack_exists(const char *name);               /* in a pack, or listed as on 
 /* Pictures: the cart copy of these exact pixels, or NULL. */
 uint32_t pack_hash(const uint8_t *pixels, int w, int h);
 const uint8_t *pack_picture(const uint8_t *pixels, int w, int h);
+/* OJ32X_FX: a picture filed under a hash of the game's own (the cart compositor's copies of pictures,
+ * port/cfx_oj.cpp), found by that hash, width and height alone; NULL if no mounted pack has it */
+const uint8_t *pack_picture_hash(uint32_t hash, int w, int h);
 
 /* A picture stored at <start> in a game file (file pictures): the decoded copy, and where
  * the file continues after it; NULL if the pack does not have it. */
@@ -103,6 +111,7 @@ bool pack_contains(const void *p);
  * and every picture it builds, and writes them as one pack when the program ends. */
 void pack_bake_file(const char *name, const char *path);
 void pack_bake_picture(const uint8_t *pixels, int w, int h);
+void pack_bake_picture_hash(uint32_t hash, const uint8_t *pixels, int w, int h);   /* OJ32X_FX */
 void pack_bake_file_picture(const char *name, uint32_t start, uint32_t end,
                             const uint8_t *pixels, int w, int h);
 

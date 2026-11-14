@@ -30,18 +30,25 @@ GAME_SRCS := \
 	jj1/level/jj1bird.cpp jj1/level/jj1levelplayer.cpp jj1/level/jj1levelplayerframe.cpp \
 	jj1/level/event/jj1bridge.cpp jj1/level/event/jj1event.cpp jj1/level/event/jj1guardians.cpp \
 	jj1/level/event/jj1standardevent.cpp jj1/level/jj1bullet.cpp jj1/level/jj1demolevel.cpp \
-	jj1/level/jj1level.cpp jj1/level/jj1levelframe.cpp jj1/level/jj1levelload.cpp \
+	jj1/level/jj1level.cpp jj1/level/jj1levelframe.cpp jj1/level/jj1levelfx.cpp jj1/level/jj1levelload.cpp \
 	jj1/planet/jj1planet.cpp jj1/save/jj1save.cpp jj1/scene/jj1scene.cpp jj1/scene/jj1sceneload.cpp
 EXT_SRCS := argparse/argparse.c miniz/miniz.c stb/stb_rect_pack.c
 XMP_SRCS := $(notdir $(wildcard $(EXT)/xmp/src/*.c)) $(addprefix loaders/,$(notdir $(wildcard $(EXT)/xmp/src/loaders/*.c)))
 PORT_CXX := sdl_oj.cpp mars_boottest.cpp
 PORT_C   := cart.c pack.c plat_mars.c mars_syscalls.c genbg.c cartcache.c
+# OJ32X_FX: FX=1 (EverDrive build only, CART=ED) - the level's picture composed by the CD32X cart
+# compositor on the EverDrive PRO's FPGA (oj/src/jj1/level/jj1levelfx.cpp, port/cfx_oj.cpp; the
+# CD32X BootCamp's cartfx/: BOOTCAMP=<folder>, default ../../CD32X-BootCamp, for cartfx.h)
+BOOTCAMP ?= $(ROOT)/../CD32X-BootCamp
+ifneq ($(FX),)
+PORT_CXX += cfx_oj.cpp
+endif
 
 # R5: CART=8 / CART=16 - the paged cart's test builds (docs/CART_8MB_16MB.md), objects of their own
 # R11: LZ=1 - the world packs compressed in the cart (R8, docs/R8_COMPRESSED_PACKS.md); default
 # off: the cart keeps them as on the disc (R7's way)
 LZ ?= 0
-OBJDIR := obj$(if $(CART),_cart$(CART))$(if $(filter 1,$(LZ)),_lz)$(if $(PROF),_prof)
+OBJDIR := obj$(if $(CART),_cart$(CART))$(if $(filter 1,$(LZ)),_lz)$(if $(PROF),_prof)$(if $(FX),_fx)
 # ED: CART=ED - the Mega EverDrive PRO as the 16 MB paged cart (CD32X BootCamp docs/12): 16 MB,
 # pages 1-6 (page 7 is the EverDrive's own), OJ32X_CART_ED
 CART_MB := $(if $(filter ED,$(CART)),16,$(CART))
@@ -51,9 +58,9 @@ DEFS   := -DOJ32X -DOJ32X_MARS -DOJ_SDL1 -DPORTABLE -DNDEBUG \
           -DOJ_VERSION=\"git-oj32x\" -DOJ_DATE=\"2026-10-06\" -D__32X__ -DMARS \
           -DOJ_URL=\"http://alister.eu/jazz/oj/\" -DOJ_BUGREPORT=\"https://github.com/AlisterT/openjazz/issues\" \
           -DLIBXMP_CORE_PLAYER -DLIBXMP_STATIC -DXMP_SYM_VISIBILITY
-INCS   := -I$(PORT)/include -I$(PORT) -I$(SRC) -I$(EXT)/argparse -I$(EXT)/miniz -I$(EXT)/xmp -I$(EXT)/xmp/src -I$(EXT)/stb
+INCS   := -I$(PORT)/include -I$(PORT) -I$(SRC) $(if $(FX),-I$(BOOTCAMP)/cartfx/model) -I$(EXT)/argparse -I$(EXT)/miniz -I$(EXT)/xmp -I$(EXT)/xmp/src -I$(EXT)/stb
 # build.sh passes EXTRA_DEFS=-DOJ32X_MUSIC=1 when music/*.wav exist
-DEFS += $(EXTRA_DEFS) $(DEFS_CART)
+DEFS += $(EXTRA_DEFS) $(DEFS_CART) $(if $(FX),-DOJ32X_FX)
 # the frame profiler box in levels - off; PROF=1 (build.sh / make_disc.sh) brings it back
 # the line-table scrolling renderer (remove for the old full-redraw renderer)
 DEFS += -DOJ32X_SCROLL

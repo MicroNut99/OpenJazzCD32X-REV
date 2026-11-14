@@ -54,6 +54,9 @@ class Sprite {
 		void setPalette     (SDL_Color* palette, int start, int amount);
 		void flashPalette   (int index);
 		void restorePalette ();
+#ifdef OJ32X_FX
+		SDL_Surface* getSurface () { return pixels; }   ///< OJ32X_FX: the picture (its engine copy is baked)
+#endif
 
 };
 

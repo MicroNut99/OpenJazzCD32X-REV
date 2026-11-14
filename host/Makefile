@@ -21,14 +21,21 @@ GAME_SRCS := \
 	jj1/level/jj1bird.cpp jj1/level/jj1levelplayer.cpp jj1/level/jj1levelplayerframe.cpp \
 	jj1/level/event/jj1bridge.cpp jj1/level/event/jj1event.cpp jj1/level/event/jj1guardians.cpp \
 	jj1/level/event/jj1standardevent.cpp jj1/level/jj1bullet.cpp jj1/level/jj1demolevel.cpp \
-	jj1/level/jj1level.cpp jj1/level/jj1levelframe.cpp jj1/level/jj1levelload.cpp \
+	jj1/level/jj1level.cpp jj1/level/jj1levelframe.cpp jj1/level/jj1levelfx.cpp jj1/level/jj1levelload.cpp \
 	jj1/planet/jj1planet.cpp jj1/save/jj1save.cpp jj1/scene/jj1scene.cpp jj1/scene/jj1sceneload.cpp
 EXT_SRCS := argparse/argparse.c miniz/miniz.c stb/stb_rect_pack.c
 XMP_SRCS := $(notdir $(wildcard $(EXT)/xmp/src/*.c)) $(addprefix loaders/,$(notdir $(wildcard $(EXT)/xmp/src/loaders/*.c)))
 PORT_CXX := sdl_oj.cpp host_new.cpp
 PORT_C   := plat_host.c mixer.c cart.c pack.c pack_bake.c genbg.c cartcache.c
+# OJ32X_FX: FX=1 - the level's picture composed by the CD32X cart compositor (jj1levelfx.cpp,
+# port/cfx_oj.cpp), here the CD32X BootCamp's reference model (BOOTCAMP=<folder>, default
+# ../../CD32X-BootCamp): host/openjazz32x_host_scroll_fx (with SCROLL=1)
+BOOTCAMP ?= $(ROOT)/../CD32X-BootCamp
+ifneq ($(FX),)
+PORT_CXX += cfx_oj.cpp
+endif
 
-OBJDIR := obj$(if $(ASAN),_asan)$(if $(SCROLL),_scroll)$(if $(CART),_cart$(CART))
+OBJDIR := obj$(if $(ASAN),_asan)$(if $(SCROLL),_scroll)$(if $(FX),_fx)$(if $(CART),_cart$(CART))
 OPT    := $(if $(ASAN),-O1 -g -fsanitize=address -fno-omit-frame-pointer,-O2 -g)
 OPT    += -fno-pie
 DEFS   := -DOJ32X -DOJ_SDL1 -DPORTABLE -DNDEBUG \
@@ -41,7 +48,8 @@ DEFS   += $(if $(SCROLL),-DOJ32X_SCROLL -DOJ32X_PANEL_DIFF)
 # R5: CART=8 / CART=16 - the paged cart's test build (docs/CART_8MB_16MB.md): host/openjazz32x_host_cart16;
 # T32X_CART_MB=4|8|16 picks the cart the PC models (default: CART)
 DEFS   += $(if $(CART),-DOJ32X_CART_MB=$(CART))
-INCS   := -I$(PORT)/include -I$(PORT) -I$(SRC) -I$(EXT)/argparse -I$(EXT)/miniz -I$(EXT)/xmp -I$(EXT)/xmp/src -I$(EXT)/stb
+DEFS   += $(if $(FX),-DOJ32X_FX)
+INCS   := -I$(PORT)/include -I$(PORT) -I$(SRC) $(if $(FX),-I$(BOOTCAMP)/cartfx/model) -I$(EXT)/argparse -I$(EXT)/miniz -I$(EXT)/xmp -I$(EXT)/xmp/src -I$(EXT)/stb
 # -Wno-narrowing: SDL 1.2 rectangles are 16-bit, font.cpp fills them from ints (as with real SDL 1.2)
 CXXFLAGS := -std=gnu++14 $(OPT) $(DEFS) $(INCS) -Wall -Wno-unused-result -Wno-narrowing -MMD -MP
 CFLAGS   := -std=gnu11 $(OPT) $(DEFS) $(INCS) -w -MMD -MP
@@ -49,9 +57,10 @@ CFLAGS   := -std=gnu11 $(OPT) $(DEFS) $(INCS) -w -MMD -MP
 OBJS := $(addprefix $(OBJDIR)/game/,$(GAME_SRCS:.cpp=.o)) \
         $(addprefix $(OBJDIR)/ext/,$(EXT_SRCS:.c=.o)) \
         $(addprefix $(OBJDIR)/xmp/,$(XMP_SRCS:.c=.o)) \
-        $(addprefix $(OBJDIR)/port/,$(PORT_CXX:.cpp=.o) $(PORT_C:.c=.o))
+        $(addprefix $(OBJDIR)/port/,$(PORT_CXX:.cpp=.o) $(PORT_C:.c=.o)) \
+        $(if $(FX),$(OBJDIR)/cfx/cartfx.o)
 
-BIN := openjazz32x_host$(if $(ASAN),_asan)$(if $(SCROLL),_scroll)$(if $(CART),_cart$(CART))
+BIN := openjazz32x_host$(if $(ASAN),_asan)$(if $(SCROLL),_scroll)$(if $(FX),_fx)$(if $(CART),_cart$(CART))
 $(BIN): $(OBJS)
 	$(CXX) $(OPT) -no-pie -o $@ $^ -lm -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free
 
@@ -70,11 +79,14 @@ $(OBJDIR)/port/%.o: $(PORT)/%.cpp
 $(OBJDIR)/port/%.o: $(PORT)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
+$(OBJDIR)/cfx/cartfx.o: $(BOOTCAMP)/cartfx/model/cartfx.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
 
 -include $(OBJS:.o=.d)
 
 clean:
-	rm -rf obj obj_asan openjazz32x_host openjazz32x_host_asan test_sdl_oj
+	rm -rf obj obj_* openjazz32x_host openjazz32x_host_* test_sdl_oj
 .PHONY: clean
 
 # shim checks (no game data needed)

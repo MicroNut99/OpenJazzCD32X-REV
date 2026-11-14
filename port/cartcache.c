@@ -26,7 +26,12 @@
 #if OJ32X_CART_MB
 
 #define WIN1        0x200000u
+#ifdef OJ32X_FX
+#define PAGE_ROOM   0x1E0000u            /* OJ32X_FX: the last 128 KB of a page: the cart compositor's
+                                            window (and in it the page's tail) */
+#else
 #define PAGE_ROOM   0x1F0000u            /* the last 64 KB of a page: its tail */
+#endif
 #define TAIL_PIECE  14
 #define PROBE_PIECE 15
 #define MAX_ENTRIES 16

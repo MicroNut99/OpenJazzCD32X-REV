@@ -24,6 +24,9 @@
 #include "cart.h"
 #include "pack.h"
 #include "genbg.h"
+#ifdef OJ32X_FX
+#include "cfx_oj.h"
+#endif
 
 #include <malloc.h>
 #include <stdint.h>
@@ -1569,13 +1572,20 @@ int plat_save_put_word(int index, int value);
 #define CMD_SAVE_PIECE_RAW 61
 int plat_cart_piece_write(int piece, const uint16_t *words, int n)
 {
+#ifdef OJ32X_FX
+	const int fx_was = cfxoj_suspend();              /* (the 68000 writes the engine's window's place) */
+#endif
 	for (int i = 0; i < n; i++) plat_save_put_word(i, words[i]);
 	MARS_COMM2 = (uint16_t)piece;
 	MARS_COMM12 = 0;
 	send_cmd_rv(CMD_SAVE_PIECE_RAW, 8000000UL);
 	*(volatile uint8_t *)0xFFFFFE92 = 0x11;
 	ed_piece = -1;                                   /* ED-SAVE: the Sub-CPU's buffer is ours now */
-	return MARS_COMM12 != 0;
+	const int ok = MARS_COMM12 != 0;
+#ifdef OJ32X_FX
+	cfxoj_resume(fx_was);
+#endif
+	return ok;
 }
 
 void plat_cart_piece_read(int piece, uint16_t *words, int n)
@@ -1585,18 +1595,33 @@ void plat_cart_piece_read(int piece, uint16_t *words, int n)
 		for (int i = 0; i < n; i++) words[i] = (uint16_t)(ed_buf[2 * i] << 8 | ed_buf[2 * i + 1]);
 		return;
 	}
+#ifdef OJ32X_FX
+	const int fx_was = cfxoj_suspend();              /* cart 0x3F0000..: the engine's window when it is on */
+#endif
 	const volatile uint8_t *p = (const volatile uint8_t *)(0x223F0000u + (uint32_t)piece * 4096u);
 	for (int i = 0; i < n; i++) words[i] = (uint16_t)(p[2 * i] << 8 | p[2 * i + 1]);
+#ifdef OJ32X_FX
+	cfxoj_resume(fx_was);
+#endif
 }
 
 /* the save area (pieces 0-13 of page 1) is only seen with page 1 in window 1 */
+#ifdef OJ32X_FX
+static int save_fx_was;   /* OJ32X_FX: the cart compositor was on (cart 0x3F0000.. is its window then) */
+#endif
 void plat_save_area_enter(void)
 {
+#ifdef OJ32X_FX
+	if (save_depth == 0) save_fx_was = cfxoj_suspend();
+#endif
 	if (save_depth++ == 0 && page_now != 1) { save_page = page_now; plat_cart_page(1); }
 }
 void plat_save_area_leave(void)
 {
 	if (save_depth > 0 && --save_depth == 0 && save_page) { plat_cart_page(save_page); save_page = 0; }
+#ifdef OJ32X_FX
+	if (save_depth == 0 && save_fx_was) { cfxoj_resume(1); save_fx_was = 0; }
+#endif
 }
 #define SAVE_AREA_ENTER() plat_save_area_enter()
 #define SAVE_AREA_LEAVE() plat_save_area_leave()

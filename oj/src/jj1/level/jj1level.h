@@ -289,6 +289,20 @@ class JJ1Level : public Level {
 		/// PORT32X (J23): this frame's logic steps, run on the slave SH2 by draw()
 		int frameSteps (int* profSteps);
 #endif
+#ifdef OJ32X_FX
+		/// OJ32X_FX: the cart compositor on the EverDrive PRO's FPGA composes the level's picture
+		/// (CD32X-BootCamp cartfx/; description in jj1levelfx.cpp)
+		bool fxOn = false;     ///< the engine draws this level (Jazz's core answered, its data is there)
+		int fxSprites = 0;     ///< the sprite set's size (loadSprites), for the pack's engine copies
+		void fxLevelStart ();
+		void fxLevelEnd ();
+		unsigned short fxBgEntry (const GridElement* ge) const;
+		unsigned short fxFgEntry (const GridElement* ge, int phase) const;
+		void fxPoke (unsigned int sram, unsigned short value);
+		void fxCell (unsigned char gridX, unsigned char gridY);
+		void fxBegin (int vX, int vY, int viewH);
+		void fxEnd ();
+#endif
 	private:
 #endif
 		bool handleSave (int slot) override;

@@ -20,6 +20,9 @@ extern "C" {
 #include "plat.h"
 }
 #include "oj32x.h"
+#ifdef OJ32X_FX
+#include "cfx_oj.h"
+#endif
 extern "C" {
 #include "cart.h"
 #include "pack.h"
@@ -448,6 +451,9 @@ OJ_FAST static int skip_visible(const Uint8 *sp, int x, int w, Uint8 key)
 	return x;
 }
 
+#ifdef OJ32X_FX
+static const Uint8 *fx_map_now;   /* the recolouring a deferred blit had when the game made it */
+#endif
 OJ_FAST static int blit_core(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_Rect *dstrect)
 {
 	int sx = 0, sy = 0, w = src->w, h = src->h;
@@ -484,6 +490,9 @@ OJ_FAST static int blit_core(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *d
 	const bool keyed = (src->flags & SDL_SRCCOLORKEY) != 0;
 	const Uint8 key = (Uint8)src->format->colorkey;
 	const Uint8 *map = su->remap;
+#ifdef OJ32X_FX
+	if (fx_map_now) map = fx_map_now;   /* a picture the engine could not draw: its colours as they were */
+#endif
 	const bool identity = map == nullptr;
 
 	for (int y = 0; y < h; ++y, sp += src->pitch, dp += dst->pitch) {
@@ -673,11 +682,64 @@ static bool clip_to_screen(int &x, int &y, int &w, int &h)
 	return true;
 }
 
+#ifdef OJ32X_FX
+/* OJ32X_FX (jj1levelfx.cpp): the level's sprites through the cart compositor. While the capture is
+ * on, a blit to the view of a keyed, not recoloured picture from the cart becomes one of the
+ * engine's sprites (its engine-form copy, cfx_oj.h); anything else waits here and is drawn by the
+ * SH2 into the ring once the engine's cells are in (oj32x_fx_replay). */
+struct FxDeferred { SDL_Surface *src; SDL_Rect s, d; Uint32 colour; bool fill; signed char map; };
+static FxDeferred fx_def[64];
+static int fx_ndef;
+static Uint8 fx_maps[8][256];   /* recoloured pictures' colours at the time of their blit (the game */
+static int fx_nmaps;            /* restores a sprite's palette right after drawing it: a hit's flash) */
+static bool fx_cap;
+static int fx_ox, fx_oy;
+void oj32x_fx_capture(bool on, int ox, int oy) { fx_cap = on; fx_ox = ox; fx_oy = oy; if (on) fx_ndef = fx_nmaps = 0; }
+static bool fx_defer(SDL_Surface *src, const SDL_Rect &sr, const SDL_Rect &dr, Uint32 colour, bool fill)
+{
+	cfxoj_n_sh2++;
+	if (fx_ndef >= (int)(sizeof fx_def / sizeof fx_def[0])) {
+		static bool warned;
+		if (!warned) { warned = true; plat_log("FX: more than 64 pictures for the SH2 in a frame"); }
+		return false;   /* drawn now, under the engine's cells (wrong, but not lost) */
+	}
+	signed char map = -1;
+	if (src && surf_of(src)->remap) {
+		if (fx_nmaps >= 8) return false;
+		map = (signed char)fx_nmaps;
+		memcpy(fx_maps[fx_nmaps++], surf_of(src)->remap, 256);
+	}
+	FxDeferred &f = fx_def[fx_ndef++];
+	f.src = src; f.s = sr; f.d = dr; f.colour = colour; f.fill = fill; f.map = map;
+	return true;
+}
+void oj32x_fx_replay(void)
+{
+	fx_cap = false;
+	for (int i = 0; i < fx_ndef; i++) {
+		FxDeferred &f = fx_def[i];
+		if (f.fill) SDL_FillRect(screen_surface, &f.d, f.colour);
+		else {
+			fx_map_now = f.map >= 0 ? fx_maps[(int)f.map] : nullptr;
+			SDL_UpperBlit(f.src, &f.s, screen_surface, &f.d);
+			fx_map_now = nullptr;
+		}
+	}
+	fx_ndef = fx_nmaps = 0;
+}
+#endif
+
 int SDL_FillRect(SDL_Surface *s, SDL_Rect *r, Uint32 colour)
 {
 	if (!(smap.on && s == screen_surface)) return fill_core(s, r, colour);
 	int x = r ? r->x : 0, y = r ? r->y : 0, w = r ? r->w : s->w, h = r ? r->h : s->h;
 	if (!clip_to_screen(x, y, w, h)) return 0;
+#ifdef OJ32X_FX
+	if (fx_cap) {
+		const SDL_Rect d = { (Sint16)x, (Sint16)y, (Uint16)w, (Uint16)h };
+		if (fx_defer(nullptr, d, d, colour, true)) return 0;
+	}
+#endif
 	map_pieces(x, y, w, h, [&](SDL_Surface *t, int tx, int ty, int tw, int th, int, int) {
 		SDL_Rect pr = { (Sint16)tx, (Sint16)ty, (Uint16)tw, (Uint16)th };
 		fill_core(t, &pr, colour);
@@ -702,6 +764,36 @@ int SDL_UpperBlit(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_Rec
 	}
 	sx += cx - dx; sy += cy - dy;
 	if (dstrect) { dstrect->x = (Sint16)cx; dstrect->y = (Sint16)cy; dstrect->w = (Uint16)cw; dstrect->h = (Uint16)ch; }
+#ifdef OJ32X_FX
+	if (fx_cap) {
+		const Surf *su = surf_of(src);
+		/* a recolouring to one colour (a hit's flash) goes through the frame's blend table */
+		bool flash = false;
+		Uint8 fc = 0;
+		if (su->remap) {
+			fc = su->remap[0];
+			flash = true;
+			for (int i = 1; i < 256; i++) if (su->remap[i] != fc) { flash = false; break; }
+		}
+		if ((src->flags & SDL_SRCCOLORKEY) && (!su->remap || flash) && (su->in_cart || su->in_pack) &&
+		    cy + ch <= smap.viewH && (!flash || cfxoj_flash(fc))) {
+			const Uint8 key = (Uint8)src->format->colorkey;
+			uint32_t a = cfxoj_sprite_copy(static_cast<const uint8_t *>(src->pixels), src->w, src->h, src->pitch, key);
+			if (a) {
+				a += (uint32_t)(sy * src->pitch + sx);
+				cfxoj_send(CFX_WORD(CFX_OP_SPRITE, flash ? 4 : 0));
+				cfxoj_send(CFX_ARG(cx + smap.vX - fx_ox)); cfxoj_send(CFX_ARG(cy + smap.vY - fx_oy));
+				cfxoj_send(CFX_ARG(cw)); cfxoj_send(CFX_ARG(ch)); cfxoj_send(CFX_ARG(src->pitch));
+				cfxoj_send(CFX_HI(a)); cfxoj_send(CFX_LO(a)); cfxoj_send(CFX_ARG(flash ? 0 : key));
+				record_world(cx, cy, cw, ch);
+				cfxoj_n_sprites++;
+				return 0;
+			}
+		}
+		const SDL_Rect sr = { (Sint16)sx, (Sint16)sy, (Uint16)cw, (Uint16)ch }, dr = { (Sint16)cx, (Sint16)cy, (Uint16)cw, (Uint16)ch };
+		if (fx_defer(src, sr, dr, 0, false)) return 0;
+	}
+#endif
 	map_pieces(cx, cy, cw, ch, [&](SDL_Surface *t, int tx, int ty, int tw, int th, int ox, int oy) {
 		SDL_Rect ps = { (Sint16)(sx + ox), (Sint16)(sy + oy), (Uint16)tw, (Uint16)th };
 		SDL_Rect pd = { (Sint16)tx, (Sint16)ty, 0, 0 };

@@ -132,6 +132,22 @@ void pack_bake_picture(const uint8_t *pixels, int w, int h)
 	npics++;
 }
 
+void pack_bake_picture_hash(uint32_t hv, const uint8_t *pixels, int w, int h)
+{
+	if (!bake_on()) return;
+	if (pack_picture_hash(hv, w, h)) return;   /* already in a mounted pack */
+	const size_t n = (size_t)w * h;
+	for (int i = 0; i < npics; ++i)
+		if (bpics[i].hash == hv && bpics[i].w == w && bpics[i].h == h) return;
+	bpics = grow(bpics, &cappics, npics + 1, sizeof *bpics);
+	bpics[npics].hash = hv;
+	bpics[npics].w = (uint16_t)w;
+	bpics[npics].h = (uint16_t)h;
+	bpics[npics].data = __real_malloc(n ? n : 1);
+	memcpy(bpics[npics].data, pixels, n);
+	npics++;
+}
+
 void pack_bake_file_picture(const char *name, uint32_t start, uint32_t end,
                             const uint8_t *pixels, int w, int h)
 {

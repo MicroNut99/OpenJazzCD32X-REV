@@ -96,6 +96,12 @@ bool oj32x_scroll_active(int *vY);
 void oj32xScrollReset();
 void oj32x_panel_reset(void);
 unsigned oj32x_plain_presents(void);
+/* OJ32X_FX (jj1levelfx.cpp): while the capture is on, blits to the level's view become the cart
+ * compositor's sprites (a picture with an engine-form copy, keyed, not recoloured); others, and
+ * fills, wait for oj32x_fx_replay, which the SH2 draws after the composed cells are copied. ox, oy:
+ * the composed picture's world origin. */
+void oj32x_fx_capture(bool on, int ox, int oy);
+void oj32x_fx_replay(void);
 /* Holiday Hare '95 (plat.h plat_game): set by the episode menu for its run */
 void oj32x_set_game(int g);
 bool oj32x_hh95_available(void);

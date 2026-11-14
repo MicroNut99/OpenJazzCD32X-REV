@@ -150,6 +150,32 @@ const uint8_t *pack_picture(const uint8_t *pixels, int w, int h)
 	return NULL;
 }
 
+const uint8_t *pack_picture_hash(uint32_t want, int w, int h)
+{
+	for (int k = npacks - 1; k >= 0; --k)
+	{
+		const uint8_t *tab = packs[k].base + 24 + packs[k].files * 24;
+		int lo = 0, hi = (int)packs[k].pics - 1;
+		while (lo <= hi)
+		{
+			int mid = (lo + hi) / 2;
+			uint32_t hv = be32(tab + mid * 12);
+			if (hv < want) { lo = mid + 1; continue; }
+			if (hv > want) { hi = mid - 1; continue; }
+			while (mid > 0 && be32(tab + (mid - 1) * 12) == want)
+				--mid;
+			for (; mid < (int)packs[k].pics && be32(tab + mid * 12) == want; ++mid)
+			{
+				const uint8_t *e = tab + mid * 12;
+				if (be16(e + 4) == w && be16(e + 6) == h)
+					return packs[k].base + be32(e + 8);
+			}
+			break;
+		}
+	}
+	return NULL;
+}
+
 const uint8_t *pack_file_picture(const char *name, uint32_t start, int w, int h, uint32_t *end)
 {
 	char want[16];

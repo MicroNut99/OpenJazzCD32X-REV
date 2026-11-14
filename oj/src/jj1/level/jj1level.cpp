@@ -135,6 +135,9 @@ JJ1Level::~JJ1Level () {
 	// PORT32X: the level leaves its view clip rectangle set on the screen, and the menus'
 	// screen clear only fills inside it - a strip of level graphics stayed at the right edge
 	// of every menu. Reset the clip rectangle and clear both frame buffers on the way out.
+#ifdef OJ32X_FX
+	fxLevelEnd();         // OJ32X_FX: the cart compositor off
+#endif
 #ifdef OJ32X_SCROLL
 	oj32xScrollReset();   // the scrolling renderer's mapping off: back to the plain screen
 #endif
@@ -839,6 +842,9 @@ int JJ1Level::play () {
 	int perfect = 0, enemyPercent = 0, itemPercent = 0;
 
 	video.setPalette(palette);
+#ifdef OJ32X_FX
+	fxLevelStart();   // OJ32X_FX: the cart compositor draws the level, when Jazz's core is there
+#endif
 
 	playMusic(musicFile);
 
@@ -908,7 +914,11 @@ int JJ1Level::play () {
 		// this frame's steps): he jittered against the level. Steps first, then the camera from
 		// the state after them, as OpenJazz does.
 		OJ32XStepJob stepJob = { this, 0, 0 };
+#ifdef OJ32X_FX
+		if (plat_slave_logic_on() && !genbg_active() && !fxOn) {
+#else
 		if (plat_slave_logic_on() && !genbg_active()) {
+#endif
 			oj32x_step_job = &stepJob;
 			oj32x_prof(0);
 			draw();
@@ -1128,6 +1138,9 @@ void JJ1Level::genbgCell (unsigned char gridX, unsigned char gridY) {
 	const bool fg = (ge->event == 123) || (ge->event == 124) || (ge->event == 125) ||
 		(eventSet[ge->event].movement == 37) || (eventSet[ge->event].movement == 38);
 	genbg_cell(gridX, gridY, fg ? 255 : ge->tile);
+#ifdef OJ32X_FX
+	fxCell(gridX, gridY);   // OJ32X_FX: the cart compositor's maps
+#endif
 
 }
 #endif

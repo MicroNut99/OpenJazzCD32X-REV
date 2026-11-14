@@ -258,6 +258,9 @@ int JJ1Level::loadSprites (char * fileName) {
 
 	// Include space in the sprite set for the blank sprite at the end
 	spriteSet = new Sprite[sprites + 1];
+#ifdef OJ32X_FX
+	fxSprites = sprites + 1;
+#endif
 
 
 	// Read offsets

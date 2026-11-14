@@ -578,6 +578,12 @@ namespace {
  * the sky shows. */
 bool JJ1Level::oj32xNoWaterfall (const GridElement* ge) const {
 
+#ifndef __sh__
+	// PC test: T32X_WATERFALL=1 draws them (as the OJ32X_FX build does), for pictures to compare with it
+	static int keep = -1;
+	if (keep < 0) keep = getenv("T32X_WATERFALL") != nullptr;
+	if (keep) return false;
+#endif
 	return worldNum == 0 && (ge->tile == 59 || ge->tile == 179);
 
 }
@@ -743,6 +749,10 @@ void JJ1Level::draw () {
 
 #ifdef OJ32X
 #ifdef OJ32X_SCROLL
+#ifdef OJ32X_FX
+	// OJ32X_FX: the cart compositor composes the picture (jj1levelfx.cpp)
+	if (fxOn) fxBegin(vX, vY, viewH); else
+#endif
 	// PORT32X: bring this frame buffer's ring up to date (see above), then the sun
 	if (oj32x_step_job) {
 		// J23: ... while the slave SH2 runs this frame's logic steps (play()); the sprites
@@ -876,6 +886,10 @@ void JJ1Level::draw () {
 #ifdef OJ32X
 	oj32x_prof(2);   // PORT32X: profiler mark - sprites (events, players, bullets)
 #ifdef OJ32X_SCROLL
+#ifdef OJ32X_FX
+	// OJ32X_FX: the engine composes (the foreground tiles are its layer 3) and the cells go into the ring
+	if (fxOn) fxEnd(); else
+#endif
 	// PORT32X: the foreground tiles straight onto the (mapped) screen
 	drawBand(canvas, vX, vY, viewH, true);
 #else
