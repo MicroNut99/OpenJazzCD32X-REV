@@ -146,8 +146,64 @@ unsigned short JJ1Level::fxBgEntry (const GridElement* ge) const {
 }
 
 
+/** Diamondus's giant waterfalls are not drawn (oj32xNoWaterfall), and many of their cells have the black
+ * background flag, which would leave black bands in the sky. As REV's tools/genesis_convert.py
+ * waterfall_black: each run of those cells in a row is black when the cells on both sides show more black
+ * than sky (in their pixel column next to the run), the sky when they show more sky; even: as the row above
+ * when that is a run too, else its own flags; a run with no black cell stays sky. Rows 0-y1 worked out in
+ * order (a row needs the one above it), the background entries of rows y0-y1 poked. */
+void JJ1Level::fxWaterfallRows (int y0, int y1) {
+
+	unsigned int prevBlack[LW / 32] = {}, curBlack[LW / 32] = {};
+	for (int y = 0; y <= y1; y++) {
+
+	const unsigned char key = video.getColorKey(tileSet);
+	const unsigned char* px = static_cast<const unsigned char*>(tileSet->pixels);
+	const int pitch = tileSet->pitch;
+	auto gone = [&](int yy, int xx) { return xx >= 0 && xx < LW && yy >= 0 && yy < LH && fgTileFx(&grid[yy][xx], eventSet) && oj32xNoWaterfall(&grid[yy][xx]); };
+	auto side = [&](int xx, int col, int& black, int& sky) {
+		black = sky = 0;
+		if (xx < 0 || xx >= LW) { black = 32; return; }
+		const GridElement* ge = &grid[y][xx];
+		int n = 32;
+		if (!fgTileFx(ge, eventSet) && ge->tile < fxN) {
+			n = 0;
+			for (int r = 0; r < 32; r++) n += px[(ge->tile * 32 + r) * pitch + col] == key;
+		}
+		if (ge->bg) black = n; else sky = n;
+	};
+	for (int x = 0; x < LW; ) {
+		if (!gone(y, x)) { x++; continue; }
+		int x1 = x;
+		bool anyBlack = false;
+		while (x1 < LW && gone(y, x1)) anyBlack |= grid[y][x1++].bg != 0;
+		for (int k = x; k < x1; k++) {
+			bool black = false;
+			if (anyBlack) {
+				int bl, bs, rl, rs;
+				side(x - 1, 31, bl, bs); side(x1, 0, rl, rs);
+				const int b = bl + rl, sk = bs + rs;
+				if (b == sk) {
+					bool above = y > 0;
+					for (int j = x; j < x1 && above; j++) above = gone(y - 1, j);
+					black = above ? (prevBlack[k >> 5] >> (k & 31) & 1) != 0 : grid[y][k].bg != 0;
+				} else black = b > sk;
+			}
+			if (black) curBlack[k >> 5] |= 1u << (k & 31);
+			if (y >= y0) fxPoke(CFXOJ_BGMAP + y * LW + k, black ? (unsigned short)(2 * fxN + 1) : 0);
+		}
+		x = x1;
+	}
+	for (int i = 0; i < LW / 32; i++) { prevBlack[i] = curBlack[i]; curBlack[i] = 0; }
+	}
+
+}
+
+
 /** The foreground map's entry: the animated tile's picture for this phase, a foreground tile, or nothing. */
 unsigned short JJ1Level::fxFgEntry (const GridElement* ge, int phase) const {
+
+	if (oj32xNoWaterfall(ge)) return 0;   // Diamondus's giant waterfalls: not drawn, as REV (the owner, 27 Oct 2026)
 
 	if (ge->event == 123)
 		return (unsigned short)(1 + (unsigned char)(phase ? eventSet[ge->event].multiB : eventSet[ge->event].multiA));
@@ -234,6 +290,7 @@ void JJ1Level::fxLevelStart () {
 			if (ge->event == 123 && fxNAnim < 256) fxAnim[fxNAnim++] = (unsigned short)(y << 8 | x);
 		}
 	fxAnimPoked = phase;
+	if (worldNum == 0) fxWaterfallRows(0, LH - 1);
 	for (int i = 0; i < 16 * 8; i++) fxPoke(CFXOJ_SUNMAP + i, 0);
 	fxSun = 0;
 
@@ -266,6 +323,7 @@ void JJ1Level::fxCell (unsigned char gridX, unsigned char gridY) {
 	if (!fxOn) return;
 	const GridElement* ge = &grid[gridY][gridX];
 	fxPoke(CFXOJ_BGMAP + gridY * LW + gridX, fxBgEntry(ge));
+	if (worldNum == 0 && oj32xNoWaterfall(ge)) fxWaterfallRows(gridY, gridY);
 	fxPoke(CFXOJ_FGMAP + gridY * LW + gridX, fxFgEntry(ge, fxAnimPoked));
 	for (int b = 0; b < 2; b++) {
 		FxBuf& S = fxBuf[b];

@@ -298,6 +298,7 @@ class JJ1Level : public Level {
 		void fxLevelEnd ();
 		unsigned short fxBgEntry (const GridElement* ge) const;
 		unsigned short fxFgEntry (const GridElement* ge, int phase) const;
+		void fxWaterfallRows (int y0, int y1);   ///< Diamondus's removed waterfalls: their cells' background (jj1levelfx.cpp)
 		void fxPoke (unsigned int sram, unsigned short value);
 		void fxCell (unsigned char gridX, unsigned char gridY);
 		void fxBegin (int vX, int vY, int viewH);
