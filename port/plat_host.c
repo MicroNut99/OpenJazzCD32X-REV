@@ -1300,8 +1300,15 @@ int plat_slave_draws_on(void) { return 0; }
  * 320x200 picture from the line-table rules, exactly as the 32X shows it, then the normal present */
 static uint8_t host_fb[2][0x20000];
 static int host_back;
+#ifdef OJ32X_FX
+#define HOST_RING_W 576       /* as plat_mars.c */
+#define HOST_PANEL  0x1C400
+#else
+#define HOST_RING_W 384
+#define HOST_PANEL  0x12E00
+#endif
 uint8_t *plat_scroll_ring(void)  { return host_fb[host_back] + 0x200; }
-uint8_t *plat_scroll_panel(void) { return host_fb[host_back] + 0x12E00; }
+uint8_t *plat_scroll_panel(void) { return host_fb[host_back] + HOST_PANEL; }
 int plat_back_index(void) { return host_back; }
 void plat_present_scroll(const uint16_t *palette555, int row0, int xoff, int viewH)
 {
@@ -1309,8 +1316,8 @@ void plat_present_scroll(const uint16_t *palette555, int row0, int xoff, int vie
 	for (int g = 0; g < 200; g++)
 	{
 		const uint8_t *src;
-		if (g < viewH) src = host_fb[host_back] + 0x200 + ((row0 + g) % 200) * 384 + xoff;
-		else src = host_fb[host_back] + 0x12E00 + (g - viewH) * 320;
+		if (g < viewH) src = host_fb[host_back] + 0x200 + ((row0 + g) % 200) * HOST_RING_W + xoff;
+		else src = host_fb[host_back] + HOST_PANEL + (g - viewH) * 320;
 		memcpy(img + g * 320, src, 320);
 	}
 	/* REV: the Genesis plane: the CRAM with bit 15 and the camera, as plat_mars.c */

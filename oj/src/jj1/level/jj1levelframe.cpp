@@ -258,7 +258,7 @@ int JJ1Level::step () {
  */
 namespace {
 	// the shadow table: 13 x 8 cells, more than one ring holds at once (12 x 7 cells of 32 px)
-	const int RW = OJ32X_RING_W, RH = OJ32X_RING_H, SHADOW_W = 13, SHADOW_H = 8;
+	const int RW = OJ32X_RING_W, RH = OJ32X_RING_H, SHADOW_W = RW / 32 + 1, SHADOW_H = 8;
 	struct ShadowCell { short tx, ty; unsigned char tile, event, bg; };
 	struct RingState {
 		bool valid;
@@ -375,7 +375,7 @@ void JJ1Level::scrollBegin (int vX, int vY, int viewH) {
 		vY + viewH <= S.rowLo || vY >= S.rowHi;
 
 	if (full) {
-		S.wx0 = vX - 32;
+		S.wx0 = vX - (RW - 320) / 2;   // (384: 32 each side; the FX build's 576: 128)
 		if (S.wx0 < 0) S.wx0 = 0;
 		S.wx0 &= ~31;
 		for (int i = 0; i < SHADOW_W * SHADOW_H; i++) S.shadow[i].tx = -1;

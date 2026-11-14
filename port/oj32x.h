@@ -84,7 +84,13 @@ void oj32x_music(const char *fileName, bool restart);
  * oj32x_panel_reset: copy the whole panel into both buffers at the next presents.
  * oj32x_plain_presents: counts frames shown without the mapping (another screen was drawn
  *   over the rings - the level then redraws them). */
+#ifdef OJ32X_FX
+#define OJ32X_RING_W  576   /* OJ32X_FX: wider rows (the frame buffer has room), so the ring is drawn
+                               again whole after 128 px of travel instead of 32 (each time is 462 cells
+                               composed by the engine and read back over the cart) */
+#else
 #define OJ32X_RING_W  384
+#endif
 #define OJ32X_RING_H  200
 #define OJ32X_PANEL_H 33
 void oj32x_scroll_map(bool on, int wx0, int vX, int vY, int viewH);

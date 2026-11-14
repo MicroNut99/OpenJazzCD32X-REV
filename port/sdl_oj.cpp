@@ -1297,8 +1297,8 @@ void oj32x_prof_frame(void)
 	         (unsigned)(prof_frames * 1000000u / (now - prof_start)), MS(total));
 	snprintf(prof_lines[1], sizeof prof_lines[1], "L%u B%u S%u F%u",
 	         MS(prof_acc[0]), MS(prof_acc[1]), MS(prof_acc[2]), MS(prof_acc[3]));
-	snprintf(prof_lines[2], sizeof prof_lines[2], "H%u P%u O%u",
-	         MS(prof_acc[4]), MS(prof_acc[5]), MS(prof_acc[6]));
+	snprintf(prof_lines[2], sizeof prof_lines[2], "H%u P%u O%u E%u",
+	         MS(prof_acc[4]), MS(prof_acc[5]), MS(prof_acc[6]), MS(prof_acc[7]));
 	#undef MS
 	for (int i = 0; i < 8; i++) prof_acc[i] = 0;
 	prof_frames = 0;

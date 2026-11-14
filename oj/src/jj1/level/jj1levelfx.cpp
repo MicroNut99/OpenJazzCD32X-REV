@@ -57,8 +57,8 @@ extern "C" {
 
 namespace {
 
-	const int RW = OJ32X_RING_W, RH = OJ32X_RING_H;   // the ring: 384 x 200
-	const int RCOLS = RW / 16, RROWS = RH / 8;        // in cells: 24 x 25
+	const int RW = OJ32X_RING_W, RH = OJ32X_RING_H;   // the ring: 576 x 200
+	const int RCOLS = RW / 16, RROWS = RH / 8;        // in cells: 36 x 25 (oj32x.h: 576 wide)
 	const int FX_DIRTY = 96;   // a frame's rectangles kept (more: the ring is drawn again whole); SDRAM is the heap's
 
 	/// one frame buffer's ring, as the engine's cells see it
@@ -66,7 +66,7 @@ namespace {
 		bool valid;
 		int wx0;                       ///< world x of ring column 0 (a multiple of 32)
 		int rowCell[RROWS];            ///< the world cell row each ring cell row holds (-1: none)
-		unsigned int colValid[RROWS];  ///< bit c: ring cell column c holds that row's world cell
+		unsigned long long colValid[RROWS];  ///< bit c: ring cell column c holds that row's world cell
 		SDL_Rect dirty[FX_DIRTY];      ///< drawn over the ring last time (ring column, world row)
 		int nDirty;
 		bool overflow;
@@ -126,7 +126,7 @@ namespace {
 			const int cy = wcy - (fxOy >> 3);
 			for (int wcx = wx >> 4; wcx <= (wx + w - 1) >> 4; wcx++) {
 				const int rc = wcx - (S.wx0 >> 4);
-				if (held && rc >= 0 && rc < RCOLS) S.colValid[rr] &= ~(1u << rc);
+				if (held && rc >= 0 && rc < RCOLS) S.colValid[rr] &= ~(1ull << rc);
 				const int cx = wcx - (fxOx >> 4);
 				if (marks && cy >= 0 && cy < fxRows && cx >= 0 && cx < fxCols) marks[cy] |= 1u << cx;
 			}
@@ -296,7 +296,7 @@ void JJ1Level::fxBegin (int vX, int vY, int viewH) {
 
 	if (S.valid && S.overflow) fxOverflows++;
 	if (!S.valid || S.overflow || S.chOverflow || vX < S.wx0 || vX + canvasW > S.wx0 + RW) {
-		S.wx0 = vX - 32;
+		S.wx0 = vX - (RW - 320) / 2;   // 128 px each side
 		if (S.wx0 < 0) S.wx0 = 0;
 		S.wx0 &= ~31;
 		for (int r = 0; r < RROWS; r++) { S.rowCell[r] = -1; S.colValid[r] = 0; }
@@ -343,6 +343,11 @@ void JJ1Level::fxBegin (int vX, int vY, int viewH) {
 	const int sunX = ((canvasW * 4) / 5) - (vX & 3), sunY = ((canvasH - 33) * 3) / 25;
 	if (sun) invalidate(S, marks, sunX + vX, sunY + vY, 32, 32);
 
+#ifndef OJ32X_MARS
+	int tr_dirty = 0;   // (PC: T32X_FX_TRACE - the cells marked for what was drawn over and what changed)
+	for (int cy = 0; cy < fxRows; cy++) for (int cx = 0; cx < fxCols; cx++) tr_dirty += marks[cy] >> cx & 1;
+	const int tr_nd = S.nDirty;
+#endif
 	// every cell of the picture the ring does not hold
 	int marked = 0;
 	for (int cy = 0; cy < fxRows; cy++) {
@@ -357,6 +362,14 @@ void JJ1Level::fxBegin (int vX, int vY, int viewH) {
 	// the frame's commands
 	cfxoj_frame(fxCols, fxRows);
 	const bool full = marked == fxCols * fxRows;
+#ifndef OJ32X_MARS
+	{
+		static int tr = -1;
+		if (tr < 0) { const char* e = getenv("T32X_FX_TRACE"); tr = e && *e == '1'; }
+		if (tr) fprintf(stderr, "FXTR v %d %d cells %d marked %d dirty %d rects %d full %d\n", vX, vY,
+		                fxCols * fxRows, marked, tr_dirty, tr_nd, full ? 1 : 0);
+	}
+#endif
 	send(CFX_WORD(CFX_OP_BEGIN, full ? 1 : 0));
 	send(CFX_WORD(CFX_OP_SCROLL, 0)); send(CFX_ARG(0)); send(CFX_ARG(fxOy % RH));
 	{
@@ -392,12 +405,14 @@ void JJ1Level::fxEnd () {
 
 	oj32x_fx_capture(false, 0, 0);
 	FxBuf& S = *fxCur;
+	oj32x_prof(3);   // (the profiler: what the sprites' commands cost; F from here is the cells' copy)
 	send(CFX_WORD(CFX_OP_GO, 0));
 	cfxoj_wait_idle();
 	const int b = fxShown ^ 1;
 	send(CFX_WORD(CFX_OP_SHOW, b));
 	cfxoj_wait_shown(b);
 	fxShown = b;
+	oj32x_prof(7);   // (the profiler's E: the SH2 waiting for the engine)
 
 	uint32_t map[CFX_ROWS];
 	cfxoj_cell_map(map);
@@ -410,7 +425,7 @@ void JJ1Level::fxEnd () {
 			const int rc = (fxOx >> 4) + cx - (S.wx0 >> 4);
 			if (rc < 0 || rc >= RCOLS) continue;
 			cfxoj_copy_cell(fxCols, cx, cy, ring + rr * 8 * RW + rc * 16, RW);
-			S.colValid[rr] |= 1u << rc;
+			S.colValid[rr] |= 1ull << rc;
 		}
 	}
 

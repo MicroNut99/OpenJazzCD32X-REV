@@ -1013,8 +1013,15 @@ void plat_clear_screens(void)
 /* frame buffer layout for the scrolling renderer (bytes): ring at 0x200 (384 x 200 =
  * 76,800), panel at 0x12E00 (320 x 33), blank line at 0x16000 */
 #define SCROLL_RING_OFF  0x00200
+#ifdef OJ32X_FX
+#define SCROLL_RING_W    576       /* OJ32X_FX (oj32x.h): ring 576 x 200 = 115,200, panel 0x1C400, blank 0x1EE00 */
+#define SCROLL_PANEL_OFF 0x1C400
+#define SCROLL_BLANK_OFF 0x1EE00
+#else
+#define SCROLL_RING_W    384
 #define SCROLL_PANEL_OFF 0x12E00
 #define SCROLL_BLANK_OFF 0x16000
+#endif
 #define VDP_SHIFT        (*(volatile uint16_t *)0x20004102)   /* bit 0: picture 1 pixel left */
 
 uint8_t *plat_scroll_ring(void)  { return (uint8_t *)FB16 + SCROLL_RING_OFF; }
@@ -1030,7 +1037,7 @@ void plat_present_scroll(const uint16_t *palette555, int row0, int xoff, int vie
 		const int g = line - PLAT_TOP_BORDER;
 		uint32_t byte;
 		if (g < 0 || g >= PLAT_GAME_H) byte = SCROLL_BLANK_OFF;
-		else if (g < viewH) byte = SCROLL_RING_OFF + (uint32_t)((row0 + g) % 200) * 384u + (uint32_t)(xoff & ~1);
+		else if (g < viewH) byte = SCROLL_RING_OFF + (uint32_t)((row0 + g) % 200) * (uint32_t)SCROLL_RING_W + (uint32_t)(xoff & ~1);
 		else byte = SCROLL_PANEL_OFF + (uint32_t)(g - viewH) * PLAT_SCREEN_W;
 		FB16[line] = (uint16_t)(byte >> 1);
 	}
