@@ -9,13 +9,17 @@ time is an estimate until step M0 measures it.
 
 ## The core
 
-Jazz's build of the engine: `KEY1` 0x584A, ID 0xC2. `mega-pro.rbf` v2.2 (13 Nov 2026), md5
-`7c3947b7c34cefa39e30260b8fe92b87`: 7,446 logic elements (48 %), timing met at every corner (worst setup slack
-+4.833 ns). It goes beside the EverDrive launcher (`EDCD_OPENJAZZ<n>.32X`) on the SD card. Without the file, or until
-the game sends the key, the cart is krikzz's SSF mapper exactly and REV runs as it does today.
+Jazz's builds of the engine: `KEY1` 0x584A, ID 0xC2, v2.3 (14 Nov 2026), two until the console says which the cart
+needs: `oj` reads the PSRAM in 5 clocks (Rayman's read), md5 `4a1a7f3c6adc6fe3195b6fef43db3ec2`, 7,438 logic elements
+(48 %), worst setup slack +3.015 ns; `oj8` in 8 (Dracula X's), md5 `68db3ba73088650c87d57fe2de719305`, 7,423 (48 %),
++3.729 ns. Timing met at every corner for both. With 8 the engine's frames take 1.3-1.5 times as long (the estimates
+below are for 5). The one the console picks goes beside the EverDrive launcher (`EDCD_OPENJAZZ<n>.32X`) on the SD
+card. Without the file, or until the game sends the key, the cart is krikzz's SSF mapper exactly and REV runs as it
+does today.
 
-The core's console test, `CFXTEST.32X` (BootCamp `cartfx/test`), runs from the SD card with no CD: it names the core,
-checks 8 composed frames word for word and times the copy into the frame buffer. That is step M0 below.
+The core's console test, `CFXTEST.32X` (BootCamp `cartfx/test`), runs from the SD card with no CD: it names the core
+and its read, checks 16 composed frames word for word (8 from each PSRAM chip) and times the copy into the frame
+buffer. That is step M0 below.
 
 ## What the engine draws for Jazz
 
