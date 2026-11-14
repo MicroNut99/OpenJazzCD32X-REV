@@ -13,7 +13,7 @@ extern "C" {
 #include "genbg.h"
 }
 
-uint32_t cfxoj_n_sprites, cfxoj_n_sh2, cfxoj_n_cells, cfxoj_n_missing;
+uint32_t cfxoj_n_sprites, cfxoj_n_sh2, cfxoj_n_cells, cfxoj_n_missing, cfxoj_n_copies;
 
 static bool on;
 static int setup_cols, setup_rows, frame_flash = -1;
@@ -162,12 +162,16 @@ uint32_t cfxoj_data(uint32_t hash, int w, int h, cfxoj_make make, const void *ar
 }
 
 /* the sprite copies seen this level: pixels' address and key -> PSRAM address (0: none to be had) */
-#define NCOPY 2048
-static struct { const uint8_t *p; uint32_t a; uint8_t key, used; } copies[NCOPY];
+/* 8 bytes an entry, 4 KB in all (SDRAM is the heap's: a level needs ~175 KB of it). A level uses ~40-100
+ * copies (its sprite set is ~240); when every entry is taken the SH2 draws the picture itself. ak: the
+ * PSRAM address (24 bits) and the key in the top byte; p == 0: free. */
+#define NCOPY 512
+static struct { const uint8_t *p; uint32_t ak; } copies[NCOPY];
 
 void cfxoj_data_reset(void)
 {
 	memset(copies, 0, sizeof copies);
+	cfxoj_n_copies = 0;
 	setup_cols = setup_rows = 0; setup_blend = 0;
 	cfxoj_n_missing = 0;
 #ifndef OJ32X_MARS
@@ -190,14 +194,14 @@ uint32_t cfxoj_sprite_copy(const uint8_t *pixels, int w, int h, int pitch, uint8
 	uint32_t k = ((uint32_t)((uintptr_t)pixels >> 2) * 2654435761u) ^ key;
 	for (int probe = 0; probe < NCOPY; probe++) {
 		const uint32_t i = (k + (uint32_t)probe) & (NCOPY - 1);
-		if (copies[i].used && copies[i].p == pixels && copies[i].key == key) return copies[i].a;
-		if (copies[i].used) continue;
+		if (copies[i].p == pixels && (uint8_t)(copies[i].ak >> 24) == key) return copies[i].ak & 0xFFFFFFu;
+		if (copies[i].p) continue;
 		uint32_t a = 0;
 		if (pitch == w) {                         /* (a picture from a pack: rows packed) */
 			const SpriteArg arg = { pixels, pitch, key };
 			a = cfxoj_data(cfxoj_hash(pack_hash(pixels, w, h), 0x53000000u | key), w, h, make_sprite, &arg);
 		}
-		copies[i].p = pixels; copies[i].key = key; copies[i].a = a; copies[i].used = 1;
+		copies[i].p = pixels; copies[i].ak = (a & 0xFFFFFFu) | (uint32_t)key << 24; cfxoj_n_copies++;
 		return a;
 	}
 	return 0;

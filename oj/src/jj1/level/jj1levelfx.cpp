@@ -59,6 +59,7 @@ namespace {
 
 	const int RW = OJ32X_RING_W, RH = OJ32X_RING_H;   // the ring: 384 x 200
 	const int RCOLS = RW / 16, RROWS = RH / 8;        // in cells: 24 x 25
+	const int FX_DIRTY = 96;   // a frame's rectangles kept (more: the ring is drawn again whole); SDRAM is the heap's
 
 	/// one frame buffer's ring, as the engine's cells see it
 	struct FxBuf {
@@ -66,7 +67,7 @@ namespace {
 		int wx0;                       ///< world x of ring column 0 (a multiple of 32)
 		int rowCell[RROWS];            ///< the world cell row each ring cell row holds (-1: none)
 		unsigned int colValid[RROWS];  ///< bit c: ring cell column c holds that row's world cell
-		SDL_Rect dirty[256];           ///< drawn over the ring last time (ring column, world row)
+		SDL_Rect dirty[FX_DIRTY];      ///< drawn over the ring last time (ring column, world row)
 		int nDirty;
 		bool overflow;
 		unsigned short changed[64];    ///< tiles changed since (gridY << 8 | gridX)
@@ -85,6 +86,7 @@ namespace {
 	unsigned short fxAnim[256];  ///< the cells with an animated foreground tile (gridY << 8 | gridX)
 	int fxNAnim;
 	int fxAnimPoked;             ///< the phase their engine entries have
+	unsigned int fxOverflows;    ///< pictures whose ring was drawn again whole: the dirty list was full
 
 	inline void send (unsigned short w) { cfxoj_send(w); }
 
@@ -238,7 +240,7 @@ void JJ1Level::fxLevelStart () {
 	fxShown = cfxoj_status() & CFX_ST_SHOWN ? 1 : 0;
 	fxBuf[0].valid = fxBuf[1].valid = false;
 	fxCur = nullptr;
-	cfxoj_n_sprites = cfxoj_n_sh2 = cfxoj_n_cells = 0;
+	cfxoj_n_sprites = cfxoj_n_sh2 = cfxoj_n_cells = 0; fxOverflows = 0;
 	fxOn = true;
 
 }
@@ -250,9 +252,9 @@ void JJ1Level::fxLevelEnd () {
 	oj32x_fx_capture(false, 0, 0);
 	cfxoj_stop();
 	fxOn = false;
-	char msg[80];
-	snprintf(msg, sizeof msg, "FX: %u SPRITES, %u FOR THE SH2, %u CELLS, %u COPIES MISSING", (unsigned)cfxoj_n_sprites,
-		(unsigned)cfxoj_n_sh2, (unsigned)cfxoj_n_cells, (unsigned)cfxoj_n_missing);
+	char msg[120];
+	snprintf(msg, sizeof msg, "FX: %u SPRITES, %u FOR THE SH2, %u CELLS, %u COPIES MISSING, %u COPIES, SET %d, %u FULL", (unsigned)cfxoj_n_sprites,
+		(unsigned)cfxoj_n_sh2, (unsigned)cfxoj_n_cells, (unsigned)cfxoj_n_missing, (unsigned)cfxoj_n_copies, fxSprites, fxOverflows);
 	plat_log(msg);
 
 }
@@ -292,6 +294,7 @@ void JJ1Level::fxBegin (int vX, int vY, int viewH) {
 	fxCur = &fxBuf[plat_back_index() & 1];
 	FxBuf& S = *fxCur;
 
+	if (S.valid && S.overflow) fxOverflows++;
 	if (!S.valid || S.overflow || S.chOverflow || vX < S.wx0 || vX + canvasW > S.wx0 + RW) {
 		S.wx0 = vX - 32;
 		if (S.wx0 < 0) S.wx0 = 0;
@@ -377,7 +380,7 @@ void JJ1Level::fxBegin (int vX, int vY, int viewH) {
 		d.x = (Sint16)(sunX + vX - S.wx0); d.y = (Sint16)(sunY + vY); d.w = 32; d.h = 32;
 	}
 	oj32x_scroll_map(true, S.wx0, vX, vY, viewH);
-	oj32x_scroll_record(S.dirty, 256, &S.nDirty, &S.overflow);
+	oj32x_scroll_record(S.dirty, FX_DIRTY, &S.nDirty, &S.overflow);
 	oj32x_fx_capture(true, fxOx, fxOy);
 
 }
@@ -396,7 +399,7 @@ void JJ1Level::fxEnd () {
 	cfxoj_wait_shown(b);
 	fxShown = b;
 
-	unsigned int map[CFX_ROWS];
+	uint32_t map[CFX_ROWS];
 	cfxoj_cell_map(map);
 	unsigned char* ring = plat_scroll_ring();
 	for (int cy = 0; cy < fxRows; cy++) {

@@ -688,9 +688,9 @@ static bool clip_to_screen(int &x, int &y, int &w, int &h)
  * engine's sprites (its engine-form copy, cfx_oj.h); anything else waits here and is drawn by the
  * SH2 into the ring once the engine's cells are in (oj32x_fx_replay). */
 struct FxDeferred { SDL_Surface *src; SDL_Rect s, d; Uint32 colour; bool fill; signed char map; };
-static FxDeferred fx_def[64];
+static FxDeferred fx_def[32];   /* (SDRAM is the heap's: kept small; a frame has 0-2) */
 static int fx_ndef;
-static Uint8 fx_maps[8][256];   /* recoloured pictures' colours at the time of their blit (the game */
+static Uint8 fx_maps[4][256];   /* recoloured pictures' colours at the time of their blit (the game */
 static int fx_nmaps;            /* restores a sprite's palette right after drawing it: a hit's flash) */
 static bool fx_cap;
 static int fx_ox, fx_oy;
@@ -700,12 +700,12 @@ static bool fx_defer(SDL_Surface *src, const SDL_Rect &sr, const SDL_Rect &dr, U
 	cfxoj_n_sh2++;
 	if (fx_ndef >= (int)(sizeof fx_def / sizeof fx_def[0])) {
 		static bool warned;
-		if (!warned) { warned = true; plat_log("FX: more than 64 pictures for the SH2 in a frame"); }
+		if (!warned) { warned = true; plat_log("FX: more than 32 pictures for the SH2 in a frame"); }
 		return false;   /* drawn now, under the engine's cells (wrong, but not lost) */
 	}
 	signed char map = -1;
 	if (src && surf_of(src)->remap) {
-		if (fx_nmaps >= 8) return false;
+		if (fx_nmaps >= 4) return false;
 		map = (signed char)fx_nmaps;
 		memcpy(fx_maps[fx_nmaps++], surf_of(src)->remap, 256);
 	}

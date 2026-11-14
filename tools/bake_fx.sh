@@ -6,8 +6,8 @@
 # cart takes each one into its world pack's page, right after it, as it takes a Genesis pack.
 # For every LEVELn.www the PC build with the engine's model (host: SCROLL=1 FX=1 CART=16) plays the level
 # for 400 frames with the common pack and the world's pack mounted, and adds what the engine needs and
-# no pack has to its world's engine pack (T32X_BAKE_MERGE). Fails if a world pack and its engine pack
-# do not fit a page below the engine's window (0x1E0000 together).
+# no pack has to its world's engine pack (T32X_BAKE_MERGE). A world whose pack and engine pack do not fit a
+# page below the engine's window (0x1E0000 together) gets no engine pack: it is drawn as without the core.
 #   tools/bake_fx.sh <data folder> <common pack> <folder with the OJ<k>.PAK> <BootCamp folder> [koff]
 set -e
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
@@ -29,15 +29,17 @@ for f in $(ls "$DATA" | grep -i '^LEVEL[0-9]\.[0-9][0-9][0-9]$' | sort -t. -k2,2
   [ -f "$TMP/out/GB$k.PAK" ] || { echo "*** $f: no engine pack made"; tail -3 "$TMP/log.txt"; exit 1; }
   n=$((n + 1))
 done
-big=0; total=0; packs=0
+total=0; packs=0; left=""
 for p in "$TMP"/out/GB*.PAK; do
   b=$(basename "$p"); k=${b:2:3}
   s=$(stat -c %s "$p"); ws=$(stat -c %s "$ROMS/OJ$k.PAK")
   pair=$(( ((ws + 0x7FFF) & ~0x7FFF) + s ))
+  if [ $pair -gt $MAX ]; then
+    echo "    OJ$k.PAK + $b: $pair bytes, more than $MAX (a page below the engine's window): world $((10#$k / 10)) is drawn without the engine"
+    left="$left $k"; continue
+  fi
   total=$((total + s)); packs=$((packs + 1))
-  if [ $pair -gt $MAX ]; then echo "*** OJ$k.PAK + $b: $pair bytes, more than $MAX (a page below the engine's window)"; big=1; fi
   cp "$p" "$ROMS/$b"
 done
 rm -rf "$TMP"
-echo "    $n levels: $packs engine packs, $((total / 1024)) KB in all"
-[ $big = 0 ] || exit 1
+echo "    $n levels: $packs engine packs, $((total / 1024)) KB in all${left:+; none for$left}"

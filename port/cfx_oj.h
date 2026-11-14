@@ -76,7 +76,7 @@ void cfxoj_frame(int cols, int rows);
 bool cfxoj_flash(uint8_t c);
 
 /* counts for the profiler's lines: engine sprites, pictures the SH2 drew itself, cells copied */
-extern uint32_t cfxoj_n_sprites, cfxoj_n_sh2, cfxoj_n_cells, cfxoj_n_missing;
+extern uint32_t cfxoj_n_sprites, cfxoj_n_sh2, cfxoj_n_cells, cfxoj_n_missing, cfxoj_n_copies;
 
 #ifdef __cplusplus
 }

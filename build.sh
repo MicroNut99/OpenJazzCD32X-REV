@@ -38,6 +38,7 @@ mkdir -p "$ROMS"
 #                                     256 colours, the Genesis plane off; each world's GB<k>.PAK is its
 #                                     engine pack (tools/bake_fx.sh). Without the core the game draws as
 #                                     the REV build, with the Genesis plane off (and its tiles on the 32X).
+#                                     FX_PACKS=keep: the engine packs already made are used again.
 CART="${CART:-}"
 case "$CART" in ""|8|16|ED) ;; *) echo "*** CART must be 8, 16 or ED (or unset) - stopping"; exit 1;; esac
 FX="${FX:-}"
@@ -131,15 +132,20 @@ fi
 # the names (and lengths, for "is it still playing") of SOUNDS.000: port/oj32x_sfx_table.h, made here
 SFX_SRC="$DATA/SOUNDS.000"; [ -f "$HH95/SOUNDS.000" ] && SFX_SRC="$SFX_SRC $HH95/SOUNDS.000"
 python3 "$HERE/tools/make_oj_sfx.py" --header "$HERE/port/oj32x_sfx_table.h" $SFX_SRC
-rm -f "$ROMS"/GB*.PAK
-if [ -n "$FX" ]; then
+if [ -n "$FX" ] && [ "${FX_PACKS:-}" = keep ] && ls "$ROMS"/GB0*.PAK >/dev/null 2>&1; then
+# FX_PACKS=keep: the engine packs already made are used again (the bonus floors are made below)
+echo "==> engine packs: kept ($(ls "$ROMS"/GB[0-7]*.PAK | wc -l))"
+rm -f "$ROMS"/GB8*.PAK
+elif [ -n "$FX" ]; then
 # OJ32X_FX: each world's GB<k>.PAK is its engine pack (the cart compositor's tiles, sprites and tables)
+rm -f "$ROMS"/GB*.PAK
 echo "==> engine packs (tools/bake_fx.sh)"
 "$HERE/tools/bake_fx.sh" "$DATA" "$ROMS/IMAGE8.RAW" "$ROMS" "$BOOTCAMP"
 if [ -f "$HH95/PANEL.000" ]; then
   "$HERE/tools/bake_fx.sh" "$HH95" "$ROMS/IMAGE8.RAW" "$ROMS" "$BOOTCAMP" 100
 fi
 else
+rm -f "$ROMS"/GB*.PAK
 # REV: the Genesis plane (docs/GENESIS_PLANE.md) - every level dumped by the PC build, converted
 # into Genesis tiles, palettes and maps, one GB<k>.PAK per world (loaded at cart 0x080000)
 echo "==> Genesis plane"
